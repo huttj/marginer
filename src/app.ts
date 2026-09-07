@@ -685,8 +685,11 @@ export class Marginer {
     this.detachEditor()
     this.besideEl.innerHTML = ''
     if (this.layout() !== 'beside') return
-    if (!list.length) { this.reserve(''); return } // nothing to make room for
-    for (const blk of list) this.besideEl.appendChild(this.buildCard(blk))
+    // A reaction with no comment is already on the page as a margin chip; its
+    // card only shows while it's being edited (click the highlight).
+    const shown = list.filter((b) => hasCommentText(b.text) || b.id === this.focused)
+    if (!shown.length) { this.reserve(''); return } // nothing to make room for
+    for (const blk of shown) this.besideEl.appendChild(this.buildCard(blk))
     this.layoutBeside()
     const ed: HTMLTextAreaElement | undefined = this.cardEditor
     if (ed && editing?.id && this.focused === editing.id) {
@@ -755,7 +758,7 @@ export class Marginer {
     const cards = Array.from(this.besideEl.children).filter((c) => c.classList.contains('mg-card')) as HTMLElement[]
     if (!cards.length) { this.reserve(''); return }
     const { x, w } = this.gutter()
-    const GAP = 8
+    const GAP = 14 // room for the reactions hanging off a card's bottom edge
     const items = cards.map((el) => {
       const blk = this.blockById(el.dataset.blockId ?? null)
       const line = blk ? this.firstLine(blk) : null
@@ -910,7 +913,7 @@ export class Marginer {
     if (this.open || !this.highlightsOn) return
     const blk = this.blockById(this.hovered)
     const line = blk && this.firstLine(blk)
-    if (!blk || !line) return
+    if (!blk || !line || !hasCommentText(blk.text)) return // a bare reaction: the chip says it all
     const card = this.buildCard(blk)
     card.querySelector('.mg-cardx')?.remove() // read-only glance; edit in the pane
     this.peekEl.appendChild(card)

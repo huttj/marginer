@@ -35,6 +35,9 @@ const type = async (sel, text) => {
   await page.$eval(sel, (el) => el.focus())
   await page.keyboard.type(text)
 }
+// Notes on the page, by state: a reaction-only note has no card (its chip is
+// the note), so cards are not a count of notes.
+const notes = () => page.evaluate(() => window.__marginer.blocks.length)
 const click = async (sel) => {
   const h = await page.$(sel)
   if (!h) throw new Error('no element for ' + sel)
@@ -104,17 +107,17 @@ await new Promise((r) => setTimeout(r, 120))
 await click('.mg-compose .mg-emojibar button[data-e="👍"]')
 await click('.mg-compose [data-act="save"]')
 await new Promise((r) => setTimeout(r, 200))
-ok('two cards', (await page.$$('.mg-card')).length === 2)
+ok('two notes (the reaction-only one has no card, just its chip)', await notes() === 2 && (await page.$$('.mg-beside .mg-card')).length === 1)
 
 // --- an ignored panel must leave nothing behind -----------------------------
-const before = (await page.$$('.mg-card')).length
+const before = await notes()
 ok('found phrase for the throwaway selection', await selectPhrase('Coleridge filled the margins'))
 await new Promise((r) => setTimeout(r, 150))
 ok('panel opened on a casual selection', await page.$('.mg-compose') !== null)
 await page.mouse.click(30, 400) // click away without typing anything
 await new Promise((r) => setTimeout(r, 250))
 ok('empty panel closes on click-away', await page.$('.mg-compose') === null)
-ok('...and creates no note', (await page.$$('.mg-card')).length === before)
+ok('...and creates no note', await notes() === before)
 ok('...and no stray highlight', await page.evaluate(() => CSS.highlights.get('marginer')?.size ?? 0) === before)
 
 // Escape discards a panel you HAD typed into, click-away keeps it.
@@ -123,11 +126,11 @@ await new Promise((r) => setTimeout(r, 150))
 await type('.mg-compose textarea', 'kept on click-away')
 await page.mouse.click(30, 400)
 await new Promise((r) => setTimeout(r, 250))
-ok('a typed panel survives click-away', (await page.$$('.mg-card')).length === before + 1)
+ok('a typed panel survives click-away', await notes() === before + 1)
 await click('.mg-card')            // open it
 await click('.mg-card.focused .mg-cardx')
 await new Promise((r) => setTimeout(r, 250))
-ok('...and can be deleted again', (await page.$$('.mg-card')).length === before)
+ok('...and can be deleted again', await notes() === before)
 
 // Selecting inside a form field is someone writing, not reading.
 await page.evaluate(() => {
@@ -142,16 +145,16 @@ ok('no panel for a selection inside a form field', await page.$('.mg-compose') =
 await page.evaluate(() => document.getElementById('mg-field').remove())
 
 // --- a reaction commits the moment you click it ------------------------------
-const n0 = (await page.$$('.mg-card')).length
+const n0 = await notes()
 ok('found phrase for the instant reaction', await selectPhrase('with such vigour'))
 await new Promise((r) => setTimeout(r, 150))
 await click('.mg-compose .mg-emojibar button[data-e="❤️"]')
-ok('card appears without pressing Save', (await page.$$('.mg-card')).length === n0 + 1)
+ok('the note lands without pressing Save', await notes() === n0 + 1)
 ok('margin chip appears too', (await page.$$('.mg-emote-stack')).length >= 1)
 ok('panel stays open so you can keep writing', await page.$('.mg-compose') !== null)
 ok('highlight is live, not a draft', await page.evaluate(() => CSS.highlights.get('marginer')?.size === 3))
 await click('.mg-compose .mg-emojibar button[data-e="❤️"]')  // un-react
-ok('un-reacting takes the note straight back out', (await page.$$('.mg-card')).length === n0)
+ok('un-reacting takes the note straight back out', await notes() === n0)
 await page.keyboard.press('Escape')
 await new Promise((r) => setTimeout(r, 200))
 
@@ -205,15 +208,30 @@ const pileMd = await page.evaluate(() => window.__marginer.markdown())
 ok('all six are stored at the head of the note', /> good code review comment\n\n👍❤️🔥🤔🎯😄/u.test(pileMd))
 ok('and all six show in the margin cluster', await page.evaluate(() =>
   [...document.querySelectorAll('.mg-emote-stack')].some((s) => s.children.length === 6)))
-const pileAt = await page.evaluate(() =>
-  [...document.querySelectorAll('.mg-beside .mg-card')].findIndex((c) => c.textContent.includes('good code review')) + 1)
-await click(`.mg-beside .mg-card:nth-child(${pileAt}) .mg-cardx`)
+// reaction-only, so no card: open it from its highlight and delete it there
+const pileHl = await page.evaluate(() => {
+  const b = window.__marginer.blocks.find((x) => x.quotes[0] === 'good code review comment')
+  b.ranges[0].startContainer.parentElement.scrollIntoView({ block: 'center' })
+  const r = [...b.ranges[0].getClientRects()].find((r) => r.width)
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+})
+ok('a reaction-only note shows no card', await page.evaluate(() => ![...document.querySelectorAll('.mg-beside .mg-card')].some((c) => c.textContent.includes('good code review'))))
+await page.mouse.click(pileHl.x, pileHl.y)
+await new Promise((r) => setTimeout(r, 250))
+ok('...until its highlight is clicked', await page.evaluate(() => document.querySelector('.mg-beside .mg-card.focused')?.textContent.includes('good code review')))
+await click('.mg-beside .mg-card.focused .mg-cardx')
 await new Promise((r) => setTimeout(r, 300))
 
 // --- cards are not squashed by the flex column -------------------------------
 ok('every card renders at its natural height', await page.evaluate(() => {
+  // (the reactions deliberately hang off the bottom edge, so measure the rest)
   const cards = [...document.querySelectorAll('.mg-card')]
-  return cards.length > 0 && cards.every((c) => c.scrollHeight <= c.clientHeight + 1)
+  return cards.length > 0 && cards.every((c) => [...c.children].filter((el) => !el.classList.contains('mg-card-emoji'))
+    .every((el) => el.getBoundingClientRect().bottom <= c.getBoundingClientRect().bottom + 1))
+}))
+ok('reactions hang off the bottom edge of the card', await page.evaluate(() => {
+  const c = document.querySelector('.mg-card'), e = c.querySelector('.mg-card-emoji')
+  return !!e && e.getBoundingClientRect().bottom > c.getBoundingClientRect().bottom && parseFloat(getComputedStyle(e).fontSize) <= 13
 }))
 
 // --- the searchable grid behind "＋" ----------------------------------------
@@ -243,11 +261,18 @@ await click('.mg-compose [data-act="save"]')
 await new Promise((r) => setTimeout(r, 200))
 ok('grid pick lands on the note', (await page.evaluate(() => window.__marginer.markdown())).includes('🔖'))
 // take it back out so the rest of the assertions see the original two notes
-await click('.mg-card')
-await new Promise((r) => setTimeout(r, 200))
-await click('.mg-card.focused .mg-cardx')
+// (reaction-only, so: open it from its highlight, then ✕)
+const bmHl = await page.evaluate(() => {
+  const b = window.__marginer.blocks.find((x) => x.note.includes('🔖'))
+  b.ranges[0].startContainer.parentElement.scrollIntoView({ block: 'center' })
+  const r = [...b.ranges[0].getClientRects()].find((r) => r.width)
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+})
+await page.mouse.click(bmHl.x, bmHl.y)
 await new Promise((r) => setTimeout(r, 250))
-ok('deleting a card removes it', (await page.$$('.mg-card')).length === 2)
+await click('.mg-beside .mg-card.focused .mg-cardx')
+await new Promise((r) => setTimeout(r, 250))
+ok('deleting a card removes it', await notes() === 2)
 
 // --- markdown export --------------------------------------------------------
 const md = await page.evaluate(() => window.__marginer.markdown())
@@ -267,7 +292,7 @@ await new Promise((r) => setTimeout(r, 150))
 await type('.mg-compose textarea', 'spans a line break')
 await click('.mg-compose [data-act="save"]')
 await new Promise((r) => setTimeout(r, 300))
-const wrapCount = (await page.$$('.mg-card')).length
+const wrapCount = await notes()
 ok('it anchors when made', await page.evaluate(() => CSS.highlights.get('marginer')?.size) === wrapCount)
 await page.reload({ waitUntil: 'load' })
 await page.evaluate(bundle)
@@ -284,7 +309,7 @@ await new Promise((r) => setTimeout(r, 300))
 await page.reload({ waitUntil: 'load' })
 await page.evaluate(bundle)
 await new Promise((r) => setTimeout(r, 300))
-ok('notes survive a reload', (await page.$$('.mg-card')).length === 2)
+ok('notes survive a reload', await notes() === 2)
 ok('re-anchored to live text', await page.evaluate(() => CSS.highlights.get('marginer')?.size === 2))
 const md2 = await page.evaluate(() => window.__marginer.markdown())
 ok('markdown round-trips unchanged', md2 === md, JSON.stringify(md2.slice(0, 120)))
@@ -327,7 +352,7 @@ ok('collapsed, the notes leave the page', await page.$eval('.mg-beside:not(.mg-p
 
 // --- collapsed: hover peeks a note, click opens the pane on it ---------------
 const peekAt = await page.evaluate(() => {
-  const b = window.__marginer.blocks.find((x) => x.ranges.length && x.note)
+  const b = window.__marginer.blocks.find((x) => x.ranges.length && x.text.trim())
   b.ranges[0].startContainer.parentElement.scrollIntoView({ block: 'center' })
   const r = [...b.ranges[0].getClientRects()].find((r) => r.width)
   return { x: r.left + r.width / 2, y: r.top + r.height / 2, note: b.note, id: b.id }
@@ -350,14 +375,14 @@ await new Promise((r) => setTimeout(r, 200))
 // --- deleting from a card, and taking it back --------------------------------
 ok('no delete-everything button in the header', await page.$('.mg-sidebar [data-act="clear"]') === null)
 ok('open cards carry no Delete/Done row', await page.$('.mg-cardfoot') === null)
-const n1 = (await page.$$('.mg-card')).length
+const n1 = await notes()
 ok('there are notes to delete', n1 > 0)
 await click('.mg-card .mg-cardx')     // the ✕ on an unopened card
-ok('the card is gone', (await page.$$('.mg-card')).length === n1 - 1)
+ok('the card is gone', await notes() === n1 - 1)
 ok('an undo is offered', await page.$('.mg-toast-act') !== null)
 await click('.mg-toast-act')
 await new Promise((r) => setTimeout(r, 250))
-ok('undo brings the note back', (await page.$$('.mg-card')).length === n1)
+ok('undo brings the note back', await notes() === n1)
 ok('...with its highlight', await page.evaluate(() => CSS.highlights.get('marginer')?.size) === n1)
 
 // --- a click on a highlight reopens its note ---------------------------------
@@ -489,10 +514,24 @@ ok('...and leaves no trace when nothing is written under it', await page.evaluat
 // back to view mode to clear the page from the cards
 await click('.mg-sidebar [data-act="mode"]')
 await new Promise((r) => setTimeout(r, 300))
-const nEnd = (await page.$$('.mg-beside .mg-card')).length
+let nEnd = (await page.$$('.mg-beside .mg-card')).length
 for (let i = nEnd; i > 0; i--) { await click('.mg-beside .mg-card .mg-cardx'); await new Promise((r) => setTimeout(r, 120)) }
 await new Promise((r) => setTimeout(r, 250))
-ok('deleting each in turn empties the page', (await page.$$('.mg-card')).length === 0)
+ok('deleting each card in turn leaves only the reaction-only notes', await page.evaluate(() => window.__marginer.blocks.every((b) => !b.text.trim())))
+// those have no card: open one from its highlight and delete it there
+while (await notes() > 0) {
+  const at = await page.evaluate(() => {
+    const b = window.__marginer.blocks[0]
+    b.ranges[0].startContainer.parentElement.scrollIntoView({ block: 'center' })
+    const r = [...b.ranges[0].getClientRects()].find((r) => r.width)
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+  })
+  await page.mouse.click(at.x, at.y)
+  await new Promise((r) => setTimeout(r, 250))
+  await click('.mg-beside .mg-card.focused .mg-cardx')
+  await new Promise((r) => setTimeout(r, 250))
+}
+ok('...and a click on the highlight opens each of those to delete', (await page.$$('.mg-card')).length === 0 && await notes() === 0)
 ok('highlights removed', await page.evaluate(() => !CSS.highlights.get('marginer')))
 
 // --- theme follows the page, not the OS -------------------------------------

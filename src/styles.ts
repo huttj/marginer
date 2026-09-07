@@ -162,7 +162,11 @@ export const CSS = `
 .mg-card:hover .mg-cardx, .mg-card.focused .mg-cardx, .mg-cardx:focus-visible { opacity: 1; }
 .mg-cardx:hover { color: var(--mg-danger); border-color: var(--mg-border); }
 
-.mg-card-emoji { display: flex; gap: 3px; padding: 0 12px 9px; font-size: 15px; line-height: 1; }
+/* tiny reactions hanging off the bottom edge of the card, as in Penumbra */
+.mg-card-emoji {
+  position: absolute; left: 12px; bottom: -8px; display: flex; gap: 3px;
+  font-size: 13px; line-height: 1; filter: drop-shadow(0 1px 1px rgba(0,0,0,.2));
+}
 
 /* ---- view mode: the same cards, floating in the page's right gutter ---- */
 .mg-beside .mg-card {
