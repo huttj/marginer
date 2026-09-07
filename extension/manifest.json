@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Marginer",
+  "version": "0.1.0",
+  "description": "Highlight any page, add notes and emoji, export the lot as markdown.",
+  "permissions": [
+    "scripting",
+    "activeTab",
+    "storage"
+  ],
+  "action": {
+    "default_title": "Marginer \u2014 annotate this page"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+U",
+        "mac": "Command+Shift+U"
+      },
+      "description": "Toggle Marginer on the current page"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

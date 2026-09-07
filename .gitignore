@@ -1,0 +1,7 @@
+node_modules/
+*.map
+.DS_Store
+test/.shots/
+# build outputs: `npm run build` regenerates these
+dist/
+extension/marginer.js

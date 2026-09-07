@@ -1,0 +1,29 @@
+# Every push to main rebuilds dist/ and publishes it to Cloudflare Pages, which
+# serves marginer.app. Needs two repository secrets: CLOUDFLARE_API_TOKEN (Account
+# → Cloudflare Pages → Edit) and CLOUDFLARE_ACCOUNT_ID.
+#
+# The e2e tests are not run here: they drive a locally cached Chrome for Testing
+# (see test/*.mjs) and are meant for `npm test` on a dev machine.
+name: deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+concurrency: deploy
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=marginer --branch=main --commit-dirty=true

@@ -1,0 +1,19 @@
+{
+  "name": "marginer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Highlight any page, add notes and emoji, export the lot as markdown. Extension, userscript, or bookmarklet.",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "test": "node test/smoke.mjs && node test/csp.mjs && node test/userscript.mjs && node test/extension.mjs",
+    "shots": "node test/shot.mjs && node test/shot.mjs --dark",
+    "deploy": "npm run build && npx wrangler pages deploy dist --project-name=marginer --branch=main --commit-dirty=true"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.2",
+    "puppeteer-core": "^24.0.0"
+  }
+}

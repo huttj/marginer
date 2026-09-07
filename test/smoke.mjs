@@ -1,0 +1,426 @@
+// End-to-end smoke test: drive a real Chrome, annotate the demo page, and check
+// the highlights, the sidebar, and the markdown export.
+import puppeteer from 'puppeteer-core'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const root = join(__dirname, '..')
+
+const base = `${process.env.HOME}/.cache/puppeteer/chrome`
+const rel = 'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+const CHROME = readdirSync(base).sort().map((b) => join(base, b, rel)).filter(existsSync).pop()
+if (!CHROME) throw new Error('No Chrome for Testing found under ' + base)
+
+const bundle = readFileSync(join(root, 'dist/marginer.js'), 'utf8')
+const fails = []
+const ok = (name, cond, extra = '') => {
+  console.log(`${cond ? '  ok  ' : ' FAIL '} ${name}${cond ? '' : '  ← ' + extra}`)
+  if (!cond) fails.push(name)
+}
+
+const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] })
+const page = await browser.newPage()
+await page.setViewport({ width: 1280, height: 900 })
+const errs = []
+page.on('pageerror', (e) => errs.push(String(e)))
+page.on('console', (m) => { if (m.type() === 'error') errs.push('console: ' + m.text()) })
+
+
+// Real synthesized mouse clicks at the element's centre. (puppeteer's own
+// page.click() hangs in its actionability wait against our absolutely-positioned
+// overlay layer; clicking the coordinates exercises the same hit-testing.)
+const type = async (sel, text) => {
+  await page.$eval(sel, (el) => el.focus())
+  await page.keyboard.type(text)
+}
+const click = async (sel) => {
+  const h = await page.$(sel)
+  if (!h) throw new Error('no element for ' + sel)
+  const b = await h.boundingBox()
+  if (!b) throw new Error('no box for ' + sel)
+  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2)
+  await new Promise((r) => setTimeout(r, 150))
+}
+
+await page.goto('file://' + join(root, 'demo/index.html'), { waitUntil: 'load' })
+await page.evaluate(bundle)
+await new Promise((r) => setTimeout(r, 200))
+
+ok('sidebar mounts', await page.$('.mg-sidebar') !== null)
+ok('empty state shown', (await page.$eval('.mg-list', (e) => e.textContent)).includes('No notes yet'))
+
+// --- select a phrase and annotate it ---------------------------------------
+const selectPhrase = (phrase) => page.evaluate((phrase) => {
+  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+  let n
+  while ((n = walk.nextNode())) {
+    // Match across source line breaks: a phrase in the markup is often wrapped,
+    // so every run of whitespace has to match every other.
+    const re = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
+    const m = re.exec(n.data)
+    if (!m) continue
+    const r = document.createRange()
+    r.setStart(n, m.index); r.setEnd(n, m.index + m[0].length)
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r)
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    return true
+  }
+  return false
+}, phrase)
+
+ok('found phrase 1', await selectPhrase('argument in miniature'))
+await new Promise((r) => setTimeout(r, 120))
+ok('selecting opens the panel directly', await page.$('.mg-compose') !== null)
+ok('compose shows the quote', (await page.$eval('.mg-compose .mg-quote', (e) => e.textContent)).includes('argument in miniature'))
+
+await type('.mg-compose textarea', 'This is the whole thesis.')
+await click('.mg-compose .mg-emojibar button[data-e="🔥"]')
+await click('.mg-compose [data-act="save"]')
+await new Promise((r) => setTimeout(r, 200))
+
+ok('compose closed', await page.$('.mg-compose') === null)
+ok('one card in sidebar', (await page.$$('.mg-card')).length === 1)
+ok('highlight registered', await page.evaluate(() => CSS.highlights.get('marginer')?.size === 1))
+ok('margin emoji chip drawn', (await page.$$('.mg-emote-stack')).length === 1)
+ok('card shows the emoji', (await page.$eval('.mg-card', (e) => e.textContent)).includes('🔥'))
+
+// --- second annotation, emoji only -----------------------------------------
+ok('found phrase 2', await selectPhrase('Markdown travels'))
+await new Promise((r) => setTimeout(r, 120))
+await new Promise((r) => setTimeout(r, 120))
+await click('.mg-compose .mg-emojibar button[data-e="👍"]')
+await click('.mg-compose [data-act="save"]')
+await new Promise((r) => setTimeout(r, 200))
+ok('two cards', (await page.$$('.mg-card')).length === 2)
+
+// --- an ignored panel must leave nothing behind -----------------------------
+const before = (await page.$$('.mg-card')).length
+ok('found phrase for the throwaway selection', await selectPhrase('Coleridge filled the margins'))
+await new Promise((r) => setTimeout(r, 150))
+ok('panel opened on a casual selection', await page.$('.mg-compose') !== null)
+await page.mouse.click(30, 400) // click away without typing anything
+await new Promise((r) => setTimeout(r, 250))
+ok('empty panel closes on click-away', await page.$('.mg-compose') === null)
+ok('...and creates no note', (await page.$$('.mg-card')).length === before)
+ok('...and no stray highlight', await page.evaluate(() => CSS.highlights.get('marginer')?.size ?? 0) === before)
+
+// Escape discards a panel you HAD typed into, click-away keeps it.
+ok('found phrase for the kept selection', await selectPhrase('parasitic on someone'))
+await new Promise((r) => setTimeout(r, 150))
+await type('.mg-compose textarea', 'kept on click-away')
+await page.mouse.click(30, 400)
+await new Promise((r) => setTimeout(r, 250))
+ok('a typed panel survives click-away', (await page.$$('.mg-card')).length === before + 1)
+await click('.mg-card')            // open it
+await click('.mg-card.focused .mg-cardx')
+await new Promise((r) => setTimeout(r, 250))
+ok('...and can be deleted again', (await page.$$('.mg-card')).length === before)
+
+// Selecting inside a form field is someone writing, not reading.
+await page.evaluate(() => {
+  const ta = document.createElement('textarea')
+  ta.id = 'mg-field'; ta.value = 'a comment box on the host page'
+  document.body.appendChild(ta)
+  ta.focus(); ta.setSelectionRange(0, 9)
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+})
+await new Promise((r) => setTimeout(r, 200))
+ok('no panel for a selection inside a form field', await page.$('.mg-compose') === null)
+await page.evaluate(() => document.getElementById('mg-field').remove())
+
+// --- a reaction commits the moment you click it ------------------------------
+const n0 = (await page.$$('.mg-card')).length
+ok('found phrase for the instant reaction', await selectPhrase('with such vigour'))
+await new Promise((r) => setTimeout(r, 150))
+await click('.mg-compose .mg-emojibar button[data-e="❤️"]')
+ok('card appears without pressing Save', (await page.$$('.mg-card')).length === n0 + 1)
+ok('margin chip appears too', (await page.$$('.mg-emote-stack')).length >= 1)
+ok('panel stays open so you can keep writing', await page.$('.mg-compose') !== null)
+ok('highlight is live, not a draft', await page.evaluate(() => CSS.highlights.get('marginer')?.size === 3))
+await click('.mg-compose .mg-emojibar button[data-e="❤️"]')  // un-react
+ok('un-reacting takes the note straight back out', (await page.$$('.mg-card')).length === n0)
+await page.keyboard.press('Escape')
+await new Promise((r) => setTimeout(r, 200))
+
+// --- an emoji you TYPE is an emoji you picked --------------------------------
+const chips0 = (await page.$$('.mg-emote-stack')).length
+ok('found phrase for the typed emoji', await selectPhrase('one reader, one app'))
+await new Promise((r) => setTimeout(r, 150))
+await page.$eval('.mg-compose textarea', (e) => e.focus())
+await page.keyboard.sendCharacter('🎯')
+await page.keyboard.type(' typed, not picked')
+await new Promise((r) => setTimeout(r, 250))
+ok('typing an emoji at the front adds a margin chip', (await page.$$('.mg-emote-stack')).length === chips0 + 1)
+ok('the picker marks it selected', await page.$eval('.mg-compose .mg-emojibar button[data-e="🎯"]', (b) => b.classList.contains('selected')))
+await click('.mg-compose [data-act="save"]')
+await new Promise((r) => setTimeout(r, 250))
+const typedMd = await page.evaluate(() => window.__marginer.markdown())
+ok('it is stored at the head of the note, Penumbra-style', typedMd.includes('🎯 typed, not picked'))
+ok('the card shows it as a reaction, not as prose', await page.evaluate(() => {
+  const card = [...document.querySelectorAll('.mg-card')].find((c) => c.textContent.includes('typed, not picked'))
+  return !!card && !card.querySelector('.mg-md').textContent.includes('🎯') && card.querySelector('.mg-card-emoji').textContent.includes('🎯')
+}))
+// Clicking the same emoji in the picker takes it back out of the note text.
+const typedAt = await page.evaluate(() =>
+  [...document.querySelectorAll('.mg-list .mg-card')].findIndex((c) => c.textContent.includes('typed, not picked')) + 1)
+ok('found the card we just made', typedAt > 0)
+await click(`.mg-list .mg-card:nth-child(${typedAt})`)
+await new Promise((r) => setTimeout(r, 250))
+await click('.mg-card.focused .mg-emojibar button[data-e="🎯"]')
+await new Promise((r) => setTimeout(r, 250))
+ok('un-picking it edits the note text itself', await page.$eval('.mg-card.focused textarea', (t) => t.value) === 'typed, not picked')
+await click('.mg-card.focused .mg-cardx')
+await new Promise((r) => setTimeout(r, 300))
+ok('the typed-emoji note is gone again', !(await page.evaluate(() => window.__marginer.markdown())).includes('typed, not picked'))
+
+// --- a note can carry as many reactions as you like --------------------------
+ok('found phrase for the emoji pile', await selectPhrase('good code review comment'))
+await new Promise((r) => setTimeout(r, 150))
+for (const e of ['👍', '❤️', '🔥', '🤔', '🎯', '😄']) {
+  await click(`.mg-compose .mg-emojibar button[data-e="${e}"]`)
+}
+ok('all six stay visible in the bar', await page.evaluate(() =>
+  ['👍', '❤️', '🔥', '🤔', '🎯', '😄'].every((e) =>
+    document.querySelector(`.mg-compose .mg-emojibar button[data-e="${e}"]`)?.classList.contains('selected'))))
+ok('the bar wrapped instead of hiding any', await page.evaluate(() => {
+  const bar = document.querySelector('.mg-compose .mg-emojibar')
+  return [...bar.querySelectorAll('button')].every((b) => b.offsetWidth > 0 && b.offsetHeight > 0)
+}))
+await click('.mg-compose [data-act="save"]')
+await new Promise((r) => setTimeout(r, 300))
+const pileMd = await page.evaluate(() => window.__marginer.markdown())
+ok('all six are stored at the head of the note', /> good code review comment\n\n👍❤️🔥🤔🎯😄/u.test(pileMd))
+ok('and all six show in the margin cluster', await page.evaluate(() =>
+  [...document.querySelectorAll('.mg-emote-stack')].some((s) => s.children.length === 6)))
+const pileAt = await page.evaluate(() =>
+  [...document.querySelectorAll('.mg-list .mg-card')].findIndex((c) => c.textContent.includes('good code review')) + 1)
+await click(`.mg-list .mg-card:nth-child(${pileAt}) .mg-cardx`)
+await new Promise((r) => setTimeout(r, 300))
+
+// --- cards are not squashed by the flex column -------------------------------
+ok('every card renders at its natural height', await page.evaluate(() => {
+  const cards = [...document.querySelectorAll('.mg-card')]
+  return cards.length > 0 && cards.every((c) => c.scrollHeight <= c.clientHeight + 1)
+}))
+
+// --- the searchable grid behind "＋" ----------------------------------------
+ok('found phrase 3', await selectPhrase('Coleridge'))
+await new Promise((r) => setTimeout(r, 120))
+await click('.mg-compose .mg-emoji-more')
+ok('emoji grid opens', await page.$('.mg-compose .mg-emojigrid button') !== null)
+ok('the grid renders a full page of the set', (await page.$$('.mg-compose .mg-emojigrid button')).length >= 400)
+ok('and says how many more there are', await page.$eval('.mg-emojinote', (e) => !e.hidden && /more/.test(e.textContent)))
+
+const searchFor = async (q) => {
+  await page.$eval('.mg-compose .mg-emoji-search', (e, q) => {
+    e.value = q; e.dispatchEvent(new Event('input', { bubbles: true }))
+  }, q)
+  await new Promise((r) => setTimeout(r, 120))
+  return page.$$eval('.mg-compose .mg-emojigrid button', (bs) => bs.map((b) => b.dataset.e))
+}
+// Three things the old 60-emoji list could not do.
+ok('search finds an ordinary object', (await searchFor('burrito')).includes('🌯'))
+ok('country flags are in there', (await searchFor('flag: japan')).includes('🇯🇵'))
+ok('so are ZWJ sequences', (await searchFor('shrug')).some((e) => e === '🤷\u200d♀️'))
+ok('and the emojilib keywords still work', (await searchFor('lol')).includes('🤣'))
+
+await searchFor('bookmark')
+await click('.mg-compose .mg-emojigrid button[data-e="🔖"]')
+await click('.mg-compose [data-act="save"]')
+await new Promise((r) => setTimeout(r, 200))
+ok('grid pick lands on the note', (await page.evaluate(() => window.__marginer.markdown())).includes('🔖'))
+// take it back out so the rest of the assertions see the original two notes
+await click('.mg-card')
+await new Promise((r) => setTimeout(r, 200))
+await click('.mg-card.focused .mg-cardx')
+await new Promise((r) => setTimeout(r, 250))
+ok('deleting a card removes it', (await page.$$('.mg-card')).length === 2)
+
+// --- markdown export --------------------------------------------------------
+const md = await page.evaluate(() => window.__marginer.markdown())
+console.log('\n--- exported markdown ---\n' + md + '-------------------------\n')
+ok('export has a source header', /^\[Marginer demo[^\]]*\]\(file:/.test(md))
+ok('export quotes phrase 1', md.includes('> argument in miniature'))
+ok('export carries the note', md.includes('🔥 This is the whole thesis.'))
+ok('export quotes phrase 2', md.includes('> Markdown travels'))
+ok('emoji-only note exports', /> Markdown travels\n\n👍/.test(md))
+ok('cards are in document order', md.indexOf('argument in miniature') < md.indexOf('Markdown travels'))
+
+// --- the View dialog (also the clipboard fallback) ---------------------------
+await click('.mg-sidebar [data-act="view"]')
+ok('view dialog opens', await page.$('.mg-modal') !== null)
+ok('dialog holds the full export', await page.$eval('.mg-modal textarea', (e) => e.value) === md)
+await click('.mg-modal [data-act="close"]')
+ok('view dialog closes', await page.$('.mg-modal') === null)
+
+// --- a quote that spans a line break in the HTML source ----------------------
+// The stored quote is one flat markdown line; the page wraps where its markup
+// wraps. These have to still find each other after a reload.
+ok('found a phrase that wraps in the source', await selectPhrase('good code review comment'))
+await new Promise((r) => setTimeout(r, 150))
+await type('.mg-compose textarea', 'spans a line break')
+await click('.mg-compose [data-act="save"]')
+await new Promise((r) => setTimeout(r, 300))
+const wrapCount = (await page.$$('.mg-card')).length
+ok('it anchors when made', await page.evaluate(() => CSS.highlights.get('marginer')?.size) === wrapCount)
+await page.reload({ waitUntil: 'load' })
+await page.evaluate(bundle)
+await new Promise((r) => setTimeout(r, 400))
+ok('and re-anchors after a reload', await page.evaluate(() => CSS.highlights.get('marginer')?.size) === wrapCount)
+const wrapAt = await page.evaluate(() =>
+  [...document.querySelectorAll('.mg-list .mg-card')].findIndex((c) => c.textContent.includes('spans a line break')) + 1)
+ok('its card is not orphaned', await page.$eval(`.mg-list .mg-card:nth-child(${wrapAt})`, (c) => !c.classList.contains('orphan')))
+await click(`.mg-list .mg-card:nth-child(${wrapAt}) .mg-cardx`)
+await new Promise((r) => setTimeout(r, 300))
+
+// --- persistence: reload and re-anchor from the stored markdown -------------
+await page.reload({ waitUntil: 'load' })
+await page.evaluate(bundle)
+await new Promise((r) => setTimeout(r, 300))
+ok('notes survive a reload', (await page.$$('.mg-card')).length === 2)
+ok('re-anchored to live text', await page.evaluate(() => CSS.highlights.get('marginer')?.size === 2))
+const md2 = await page.evaluate(() => window.__marginer.markdown())
+ok('markdown round-trips unchanged', md2 === md, JSON.stringify(md2.slice(0, 120)))
+
+// --- image annotation -------------------------------------------------------
+await page.evaluate(() => {
+  const img = document.querySelector('img')
+  const r = document.createRange(); r.selectNode(img)
+  const s = getSelection(); s.removeAllRanges(); s.addRange(r)
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+})
+await new Promise((r) => setTimeout(r, 150))
+if (await page.$('.mg-compose')) {
+    await new Promise((r) => setTimeout(r, 120))
+  await type('.mg-compose textarea', 'Nice figure.')
+  await click('.mg-compose [data-act="save"]')
+  await new Promise((r) => setTimeout(r, 200))
+  ok('image overlay box drawn', (await page.$$('.mg-imghl')).length >= 1)
+  ok('image exports as a markdown embed', (await page.evaluate(() => window.__marginer.markdown())).includes('!['))
+} else {
+  ok('image selection offers a note', false, 'selecting an image opened no panel')
+}
+
+// --- alt-click an image ------------------------------------------------------
+await page.evaluate(() => { getSelection().removeAllRanges(); window.__marginer.markdown() })
+const imgBox = await (await page.$('img')).boundingBox()
+await page.keyboard.down('Alt')
+await page.mouse.click(imgBox.x + imgBox.width / 2, imgBox.y + imgBox.height / 2)
+await page.keyboard.up('Alt')
+await new Promise((r) => setTimeout(r, 200))
+ok('⌥-click on an image opens compose', await page.$('.mg-compose') !== null)
+await page.keyboard.press('Escape')
+await new Promise((r) => setTimeout(r, 150))
+
+// --- toggle off / on --------------------------------------------------------
+await page.evaluate(bundle) // second injection = collapse
+await new Promise((r) => setTimeout(r, 120))
+ok('re-injecting collapses to the pill', await page.$('.mg-fab') !== null && await page.$eval('.mg-sidebar', (e) => e.style.display) === 'none')
+await click('.mg-fab')
+await new Promise((r) => setTimeout(r, 120))
+ok('pill re-opens the sidebar', await page.$eval('.mg-sidebar', (e) => e.style.display) === '')
+
+// --- deleting from a card, and taking it back --------------------------------
+ok('no delete-everything button in the header', await page.$('.mg-sidebar [data-act="clear"]') === null)
+ok('open cards carry no Delete/Done row', await page.$('.mg-cardfoot') === null)
+const n1 = (await page.$$('.mg-card')).length
+ok('there are notes to delete', n1 > 0)
+await click('.mg-card .mg-cardx')     // the ✕ on an unopened card
+ok('the card is gone', (await page.$$('.mg-card')).length === n1 - 1)
+ok('an undo is offered', await page.$('.mg-toast-act') !== null)
+await click('.mg-toast-act')
+await new Promise((r) => setTimeout(r, 250))
+ok('undo brings the note back', (await page.$$('.mg-card')).length === n1)
+ok('...with its highlight', await page.evaluate(() => CSS.highlights.get('marginer')?.size) === n1)
+
+// --- the sidebar squeezes the page rather than covering it -------------------
+ok('page is squeezed by the sidebar width', await page.evaluate(() =>
+  parseInt(document.documentElement.style.marginRight) === document.querySelector('.mg-sidebar').offsetWidth))
+
+// --- a click on a highlight reopens its note ---------------------------------
+await page.keyboard.press('Escape')
+await new Promise((r) => setTimeout(r, 150))
+const hl = await page.evaluate(() => {
+  const range = window.__marginer.blocks.find((b) => b.ranges.length).ranges[0]
+  range.startContainer.parentElement.scrollIntoView({ block: 'center' })
+  const r = [...range.getClientRects()].find((r) => r.width) // the first rect can be a zero-width one
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+})
+await page.mouse.click(hl.x, hl.y)
+await new Promise((r) => setTimeout(r, 250))
+ok('clicking a highlight opens its card for editing', await page.$('.mg-card.focused textarea') !== null)
+await page.keyboard.press('Escape')
+await new Promise((r) => setTimeout(r, 150))
+
+// --- reaction chips are centered on the line they belong to -------------------
+ok('chips sit centered on their line', await page.evaluate(() => {
+  const stacks = [...document.querySelectorAll('.mg-emote-stack')]
+  return stacks.length > 0 && stacks.every((s) => {
+    const b = window.__marginer.blocks.find((x) => x.id === s.dataset.blockId)
+    const line = [...b.ranges[0].getClientRects()].find((r) => r.width)
+    const r = s.getBoundingClientRect()
+    return Math.abs((r.top + r.height / 2) - (line.top + line.height / 2)) < 3
+  })
+}))
+
+// --- view mode: cards beside the text, level with their highlights -------------
+await click('.mg-sidebar [data-act="mode"]')
+await new Promise((r) => setTimeout(r, 400))
+ok('view mode hides the sidebar', await page.$eval('.mg-sidebar', (e) => e.style.display) === 'none')
+ok('...and releases the squeeze on a page with a gutter', await page.evaluate(() => !document.documentElement.style.margin))
+ok('cards float in the right gutter', await page.evaluate(() => {
+  const cards = [...document.querySelectorAll('.mg-beside .mg-card')]
+  const col = document.querySelector('p').getBoundingClientRect().right
+  return cards.length === window.__marginer.blocks.length && cards.every((c) => c.getBoundingClientRect().left > col)
+}))
+ok('each card sits at (or below, if crowded) its highlight', await page.evaluate(() => {
+  let prevBottom = -Infinity
+  return [...document.querySelectorAll('.mg-beside .mg-card')].every((c) => {
+    const b = window.__marginer.blocks.find((x) => x.id === c.dataset.blockId)
+    const r = c.getBoundingClientRect()
+    const line = b.ranges[0] && [...b.ranges[0].getClientRects()].find((r) => r.width)
+    const okTop = !line || r.top >= line.top - 5
+    const okStack = r.top >= prevBottom
+    prevBottom = r.bottom
+    return okTop && okStack
+  })
+}))
+await click('.mg-bar [data-act="mode"]')
+await new Promise((r) => setTimeout(r, 300))
+ok('back to the list', await page.$eval('.mg-sidebar', (e) => e.style.display) === '' && (await page.$$('.mg-list .mg-card')).length === n1)
+
+// clear the page the only way left: one at a time
+for (let i = n1; i > 0; i--) { await click('.mg-card .mg-cardx'); await new Promise((r) => setTimeout(r, 120)) }
+await new Promise((r) => setTimeout(r, 250))
+ok('deleting each in turn empties the page', (await page.$$('.mg-card')).length === 0)
+ok('highlights removed', await page.evaluate(() => !CSS.highlights.get('marginer')))
+
+// --- theme follows the page, not the OS -------------------------------------
+ok('light page -> light panel', await page.evaluate(() => document.documentElement.getAttribute('data-mg-theme')) === 'light')
+await page.goto('file://' + join(root, 'demo/dark.html'), { waitUntil: 'load' })
+await page.evaluate(bundle)
+await new Promise((r) => setTimeout(r, 200))
+ok('dark page -> dark panel', await page.evaluate(() => document.documentElement.getAttribute('data-mg-theme')) === 'dark')
+
+// --- the bookmarklet build actually runs ------------------------------------
+// Clicking a javascript: link is the real install path, so test that, not just
+// the bundle: it catches URL-encoding bugs the eval() path would never see.
+const bookmarklet = readFileSync(join(root, 'dist/bookmarklet.txt'), 'utf8')
+await page.goto('file://' + join(root, 'demo/index.html'), { waitUntil: 'load' })
+await page.evaluate((href) => {
+  const a = document.createElement('a')
+  a.id = 'mg-bm-test'; a.href = href; a.textContent = 'run'
+  document.body.appendChild(a)
+}, bookmarklet)
+await click('#mg-bm-test')
+await new Promise((r) => setTimeout(r, 400))
+ok('bookmarklet boots from a javascript: link', await page.$('.mg-sidebar') !== null)
+ok('bookmarklet did not navigate away', page.url().endsWith('demo/index.html'))
+
+ok('no page errors', errs.length === 0, errs.join(' | '))
+
+await browser.close()
+console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(', ')}` : '\nAll checks passed.')
+process.exit(fails.length ? 1 : 0)
