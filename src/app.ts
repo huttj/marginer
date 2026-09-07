@@ -302,9 +302,17 @@ export class Marginer {
     return rect.width || rect.height ? rect : null
   }
 
-  // The y to center a chip on: the middle of a line of text, or just inside the
-  // top edge of anything taller than a line (an image, a whole block).
-  private lineCenter = (line: DOMRect) => line.top + Math.min(line.height, 24) / 2
+  // The y a chip is centered on: the middle of the whole highlight -- one line,
+  // several lines, or an image -- measured over the boxes that have width (a
+  // range starting at a node boundary reports a stray zero-width one).
+  private lineCenter1 = (line: DOMRect) => line.top + line.height / 2
+  private highlightCenter(b: Block): number | null {
+    const rects = Array.from(b.ranges[0]?.getClientRects() ?? []).filter((r) => r.width)
+    if (!rects.length) return null
+    const top = Math.min(...rects.map((r) => r.top))
+    const bottom = Math.max(...rects.map((r) => r.bottom))
+    return (top + bottom) / 2
+  }
 
   // ---- rendering ------------------------------------------------------------
 
@@ -402,7 +410,7 @@ export class Marginer {
       stack.addEventListener('click', () => this.focus(blk.id, false))
       this.layer.appendChild(stack)
       const h = stack.offsetHeight
-      const top = Math.max(window.scrollY + this.lineCenter(line) - h / 2, bottom + 6)
+      const top = Math.max(window.scrollY + (this.highlightCenter(blk) ?? this.lineCenter1(line)) - h / 2, bottom + 6)
       stack.style.left = `${window.scrollX + (onRight ? this.columnRight(blk.ranges[0]) + 8 : colLeft - 8)}px`
       stack.style.top = `${top}px`
       bottom = top + h

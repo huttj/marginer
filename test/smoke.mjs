@@ -407,13 +407,14 @@ await page.keyboard.press('Escape')
 await new Promise((r) => setTimeout(r, 150))
 
 // --- reaction chips are centered on the line they belong to -------------------
-ok('chips sit centered on their line', await page.evaluate(() => {
+ok('chips sit centered on the whole highlight', await page.evaluate(() => {
   const stacks = [...document.querySelectorAll('.mg-emote-stack')]
   return stacks.length > 0 && stacks.every((s) => {
     const b = window.__marginer.blocks.find((x) => x.id === s.dataset.blockId)
-    const line = [...b.ranges[0].getClientRects()].find((r) => r.width)
+    const rects = [...b.ranges[0].getClientRects()].filter((r) => r.width)
+    const top = Math.min(...rects.map((r) => r.top)), bottom = Math.max(...rects.map((r) => r.bottom))
     const r = s.getBoundingClientRect()
-    return Math.abs((r.top + r.height / 2) - (line.top + line.height / 2)) < 3
+    return Math.abs((r.top + r.height / 2) - (top + bottom) / 2) < 3
   })
 }))
 
