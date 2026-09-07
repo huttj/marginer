@@ -47,24 +47,28 @@ await annotate('digital reading was never', 'Is this true? Kindle highlights, In
 const shot = async (name) => { await page.screenshot({ path: join(root, `test/.shots/${name}.png`) }) }
 await page.evaluate(() => window.scrollTo(0, 0))
 await new Promise((r) => setTimeout(r, 350))
-await shot(dark ? 'minimized-dark' : 'minimized')
-
-// the sidebar: the document as one text pane
-await click('.mg-fab')
-await new Promise((r) => setTimeout(r, 400))
+// view mode (the boot state): cards beside the text, then one pinned to its highlight
 await shot(dark ? 'overview-dark' : 'overview')
-
-// view mode: cards beside the text, one pinned to its highlight
-await click('.mg-sidebar [data-act="mode"]')
-await new Promise((r) => setTimeout(r, 400))
 await click('.mg-beside .mg-card:nth-child(4)')
 await new Promise((r) => setTimeout(r, 400))
 await shot(dark ? 'focused-dark' : 'focused')
 await page.keyboard.press('Escape')
 await new Promise((r) => setTimeout(r, 300))
-await shot(dark ? 'beside-dark' : 'beside')
-await click('.mg-bar [data-act="collapse"]')
+
+// the sidebar: the document as one text pane
+await click('.mg-bar [data-act="mode"]')
+await new Promise((r) => setTimeout(r, 400))
+await shot(dark ? 'pane-dark' : 'pane')
+
+// collapsed: a hovered highlight peeks its note
+await click('.mg-sidebar [data-act="collapse"]')
 await new Promise((r) => setTimeout(r, 300))
+const peek = await page.evaluate(() => { const r = [...window.__marginer.blocks[1].ranges[0].getClientRects()].find((r) => r.width); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })
+await page.mouse.move(peek.x, peek.y)
+await new Promise((r) => setTimeout(r, 300))
+await shot(dark ? 'peek-dark' : 'peek')
+await page.mouse.move(5, 5)
+await new Promise((r) => setTimeout(r, 200))
 
 // compose popover
 await page.keyboard.press('Escape')
