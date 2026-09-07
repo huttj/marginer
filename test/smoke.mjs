@@ -340,16 +340,12 @@ await new Promise((r) => setTimeout(r, 200))
 ok('...and it goes when the mouse leaves', await page.$('.mg-peek .mg-card') === null)
 await page.mouse.click(peekAt.x, peekAt.y)
 await new Promise((r) => setTimeout(r, 300))
-ok('clicking a highlight while collapsed opens the pane on its reply', await page.evaluate((p) => {
-  const ta = document.querySelector('.mg-pane')
-  return window.__marginer.open && ta.style.display !== 'none' && document.activeElement === ta && window.__marginer.blockAtCaret()?.id === p.id
+ok('clicking a highlight while collapsed brings view mode back with that note open', await page.evaluate((p) => {
+  const c = document.querySelector('.mg-beside:not(.mg-peek) .mg-card.focused')
+  return window.__marginer.open && document.querySelector('.mg-sidebar').style.display === 'none' && c?.dataset.blockId === p.id && !!c.querySelector('textarea')
 }, peekAt))
-ok('the quote lines are tinted behind the text', await page.evaluate(() => document.querySelectorAll('.mg-paneback .mg-q').length === window.__marginer.blocks.length))
-ok('the caret block\'s quote is the active one', await page.$$eval('.mg-paneback .mg-q.active', (q) => q.length === 1))
-await page.$eval('.mg-pane', (e) => e.blur())
-await click('.mg-sidebar [data-act="mode"]')
+await page.keyboard.press('Escape')
 await new Promise((r) => setTimeout(r, 200))
-ok('back in view mode', await page.evaluate(() => window.__marginer.open && !!document.querySelector('.mg-beside .mg-card')))
 
 // --- deleting from a card, and taking it back --------------------------------
 ok('no delete-everything button in the header', await page.$('.mg-sidebar [data-act="clear"]') === null)
@@ -433,6 +429,16 @@ ok('clicking a highlight puts the caret at the end of its reply', await page.eva
   const ta = document.querySelector('.mg-pane')
   return document.activeElement === ta && window.__marginer.blockAtCaret()?.id === first.id && ta.value.slice(0, ta.selectionStart).endsWith(first.note)
 }, first))
+ok('anchored quote lines are tinted behind the text', await page.evaluate(() =>
+  document.querySelectorAll('.mg-paneback .mg-q:not(.orphan)').length === window.__marginer.blocks.filter((b) => b.ranges.length).length))
+ok('the caret block\'s quote is the active one', await page.evaluate((first) => {
+  const a = document.querySelectorAll('.mg-paneback .mg-q.active')
+  return a.length === 1 && a[0].dataset.blockId === first.id
+}, first))
+ok('the textarea never scrolls itself (the wrapper does)', await page.evaluate(() => {
+  const ta = document.querySelector('.mg-pane')
+  return ta.scrollHeight <= ta.offsetHeight + 1 && getComputedStyle(ta).overflowY === 'hidden'
+}))
 
 // editing the text re-anchors: strip a quote's '>' and its highlight goes
 const hlN = await page.evaluate(() => CSS.highlights.get('marginer')?.size ?? 0)
@@ -443,6 +449,31 @@ await page.$eval('.mg-pane', (ta) => {
 await new Promise((r) => setTimeout(r, 400))
 ok('un-quoting a line removes its highlight', await page.evaluate(() => CSS.highlights.get('marginer')?.size ?? 0) === hlN - 1)
 ok('the pane text is kept verbatim', (await paneVal()).includes('\nwhat you can paste afterwards'))
+// a quote the page doesn't contain is marked as such, not tinted
+await page.$eval('.mg-pane', (ta) => {
+  ta.value = ta.value + '\n\n> nothing on this page says this\n'
+  ta.dispatchEvent(new Event('input', { bubbles: true }))
+})
+await new Promise((r) => setTimeout(r, 400))
+ok('a quote that is not on the page is not tinted', await page.$$eval('.mg-paneback .mg-q.orphan', (q) => q.length === 1 && q[0].textContent.includes('nothing on this page')))
+// typing at the end of a long document keeps the caret in view: the wrapper scrolls
+await page.$eval('.mg-pane', (ta) => {
+  ta.value = ta.value + '\n\n' + Array.from({ length: 40 }, (_, i) => `filler line ${i}`).join('\n')
+  ta.dispatchEvent(new Event('input', { bubbles: true }))
+  ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length)
+})
+await page.keyboard.type(' tail')
+await new Promise((r) => setTimeout(r, 300))
+ok('the pane scrolls to keep the caret in view', await page.evaluate(() => {
+  const wrap = document.querySelector('.mg-panewrap')
+  // the last line (above the 40px bottom padding) is inside the viewport
+  return wrap.scrollTop > 0 && wrap.scrollTop + wrap.clientHeight >= wrap.scrollHeight - 40 - 24
+}))
+await page.$eval('.mg-pane', (ta) => {
+  ta.value = ta.value.replace(/\n\n> nothing on this page says this\n[\s\S]*$/, '\n')
+  ta.dispatchEvent(new Event('input', { bubbles: true }))
+})
+await new Promise((r) => setTimeout(r, 400))
 
 // a quote nobody wrote under is dropped on click-away, like an empty popover
 await page.mouse.click(30, 400)

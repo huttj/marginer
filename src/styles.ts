@@ -69,26 +69,28 @@ export const CSS = `
    textarea sits over a mirror layer carrying the same text, invisible, with the
    quote lines tinted -- the only way to style lines inside a textarea. Both
    layers share every metric that affects wrapping, so they stay in register. */
-.mg-panewrap { flex: 1; position: relative; min-height: 0; }
+.mg-panewrap { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.mg-panebody { position: relative; min-height: 100%; }
 .mg-pane, .mg-paneback {
-  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border: none;
-  padding: 14px 16px; overflow-y: auto; scrollbar-gutter: stable;
+  display: block; width: 100%; margin: 0; border: none; padding: 14px 16px 40px;
   font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; tab-size: 4;
   letter-spacing: normal; text-transform: none; text-align: left;
 }
+.mg-paneback { min-height: 100%; color: transparent; pointer-events: none; background: var(--mg-bg); }
 .mg-pane {
+  position: absolute; inset: 0; height: 100%; overflow: hidden;
   resize: none; outline: none; background: transparent; color: var(--mg-fg);
-  overscroll-behavior: contain;
 }
 .mg-pane::placeholder { color: var(--mg-muted); }
-.mg-paneback { color: transparent; pointer-events: none; overflow: hidden; background: var(--mg-bg); }
 .mg-paneback .mg-q {
   background: rgba(185,119,10,.11); border-radius: 3px;
   box-shadow: -4px 0 0 rgba(185,119,10,.55), 4px 0 0 rgba(185,119,10,.11);
   box-decoration-break: clone; -webkit-box-decoration-break: clone;
 }
 .mg-paneback .mg-q.active { background: rgba(185,119,10,.24); box-shadow: -4px 0 0 var(--mg-accent), 4px 0 0 rgba(185,119,10,.24); }
+/* a quote the page doesn't contain: marked, not tinted */
+.mg-paneback .mg-q.orphan { background: none; box-shadow: -4px 0 0 rgba(128,128,128,.35); }
 :root[data-mg-theme="dark"] .mg-paneback .mg-q { background: rgba(224,165,46,.16); }
 :root[data-mg-theme="dark"] .mg-paneback .mg-q.active { background: rgba(224,165,46,.30); }
 .mg-panebar { padding: 6px 10px 8px; border-top: 1px solid var(--mg-border); }
@@ -168,8 +170,6 @@ export const CSS = `
 }
 .mg-beside .mg-card.mg-settled { transition: top .2s ease, border-color .15s ease, box-shadow .15s ease; }
 .mg-beside .mg-card.focused, .mg-beside .mg-card:hover { z-index: 2147483644; box-shadow: var(--mg-shadow); }
-/* highlight -> card, when the focused card is level with its highlight */
-.mg-lead { position: absolute; height: 0; border-top: 2px solid var(--mg-accent); opacity: .7; pointer-events: none; }
 
 /* view-mode toolbar: the sidebar's head, as a pill where the collapsed one sits */
 .mg-bar {

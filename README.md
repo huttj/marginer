@@ -119,8 +119,8 @@ notes taken with either show up under the other and you can install both.
 
 It boots in **view mode**: the notes are on the page from the start, floating
 beside their highlights, with a small pill bar in the corner. The sidebar — the
-text pane — is one click away (⊟ on the bar, or click any highlight while
-collapsed). Collapsed to the pill, a hovered highlight peeks its note.
+text pane — is one click away on the bar. Collapsed to the pill, a hovered
+highlight peeks its note, and a click brings the notes back.
 
 | | |
 |---|---|
@@ -134,8 +134,8 @@ collapsed). Collapsed to the pill, a hovered highlight peeks its note.
 | ⌘↵ | save, including a bare highlight with no note |
 | Esc | cancel the whole thing |
 | ⌥-click an image | annotate a figure on its own |
-| Edit the pane | the page re-anchors as you type; delete a `>` line and its highlight goes. Quote lines are tinted (a mirror layer behind the textarea — the only way to style lines in one) |
-| Click a highlight | drops the caret at the end of its reply (in view mode: opens its card; collapsed: opens the pane) |
+| Edit the pane | the page re-anchors as you type; delete a `>` line and its highlight goes. Quotes that anchor are tinted (a mirror layer behind the textarea — the only way to style lines in one); a quote the page doesn't contain is marked, not tinted |
+| Click a highlight | opens its card for editing, bringing view mode back if collapsed (with the pane open: drops the caret at its reply) |
 | Hover a highlight, collapsed | peeks its note beside the text |
 | The caret's block | is the active one — its highlight brightens on the page |
 | ⊞ in the header | **view mode**: cards float beside the text, level with their highlights |
@@ -151,7 +151,7 @@ that margin — nothing to be done there.)
 **View mode** is the Google-Docs layout. Cards float in the page's right
 gutter at the height of their highlight; where two would collide they stack
 downward, and the card you're editing pins itself level with its highlight
-(a short lead line joins the two) and pushes its neighbours out of the way. It's the boot state. A full-bleed page with no gutter has one
+and pushes its neighbours out of the way. It's the boot state. A full-bleed page with no gutter has one
 squeezed out of it, by the same margin trick — and since squeezing a centered
 column only yields half the margin as gutter, the code measures what one push
 gained and extrapolates rather than iterating. The choice of mode is

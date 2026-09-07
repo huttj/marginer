@@ -74,6 +74,7 @@ export class Marginer {
   // source of truth -- the page re-anchors from it as you type.
   private paneEl!: HTMLTextAreaElement
   private paneBack!: HTMLElement     // mirror layer that tints the quote lines
+  private paneWrap!: HTMLElement     // the scroller; the textarea grows and never scrolls itself
   private paneEmoji!: HTMLElement
   private paneTimer: any = null
   // A quote the pane just took from a selection, with nothing typed under it yet.
@@ -400,9 +401,11 @@ export class Marginer {
         <button class="mg-tbtn" data-act="hl" title="Show/hide highlights">${ICON.eye}</button>
         <button class="mg-tbtn" data-act="collapse" title="Collapse">${ICON.close}</button>
       </div>
-      <div class="mg-panewrap">
-        <div class="mg-paneback" data-paneback aria-hidden="true"></div>
-        <textarea class="mg-pane" data-pane spellcheck="false" placeholder="Select text on the page and it lands here as a quote. Write your reply beneath it."></textarea>
+      <div class="mg-panewrap" data-panewrap>
+        <div class="mg-panebody">
+          <div class="mg-paneback" data-paneback aria-hidden="true"></div>
+          <textarea class="mg-pane" data-pane spellcheck="false" placeholder="Select text on the page and it lands here as a quote. Write your reply beneath it."></textarea>
+        </div>
       </div>
       <div class="mg-hint">Emoji at the front of a reply are its reactions. <b>⌥-click</b> an image to quote it.</div>
       <div class="mg-panebar" data-emojislot></div>
@@ -413,7 +416,7 @@ export class Marginer {
     this.sidebar = bar
     this.paneEl = bar.querySelector('[data-pane]') as HTMLTextAreaElement
     this.paneBack = bar.querySelector('[data-paneback]') as HTMLElement
-    this.paneEl.addEventListener('scroll', () => { this.paneBack.scrollTop = this.paneEl.scrollTop })
+    this.paneWrap = bar.querySelector('[data-panewrap]') as HTMLElement
 
     const act = (n: string, f: () => void) => bar.querySelector(`[data-act="${n}"]`)!.addEventListener('click', f)
     act('mode', () => this.setMode('beside'))
@@ -457,7 +460,10 @@ export class Marginer {
   // Typing: the text is the document now. Re-anchor shortly after the keys stop.
   // The quote lines' tint. A textarea can't style its own lines, so a layer
   // behind it carries the same text (invisible) with the `>` lines marked; the
-  // two wrap identically because they share font, padding and width.
+  // two wrap identically because they share font, padding and width. The mirror
+  // is in flow and sets the height; the textarea stretches over it and never
+  // scrolls itself -- the wrapper scrolls, so the two move as one, rubber-band
+  // bounce included. Only quotes that anchored on the page get the tint.
   private renderPaneBack() {
     const text = this.paneEl.value
     const lines = text.split('\n')
@@ -467,11 +473,23 @@ export class Marginer {
       o += l.length + 1
       if (!/^\s*>/.test(l)) return esc(l)
       const k = this.spans.findIndex((sp) => start >= sp.start && start < sp.end)
-      const active = k >= 0 && this.blocks[k]?.id === this.focused
-      return `<span class="mg-q${active ? ' active' : ''}">${esc(l)}</span>`
+      const blk = k >= 0 ? this.blocks[k] : undefined
+      const cls = !blk?.ranges.length ? 'mg-q orphan' : blk.id === this.focused ? 'mg-q active' : 'mg-q'
+      return `<span class="${cls}" data-block-id="${blk?.id ?? ''}">${esc(l)}</span>`
     }).join('\n')
     this.paneBack.innerHTML = html + '\n' // a trailing newline keeps the heights equal
-    this.paneBack.scrollTop = this.paneEl.scrollTop
+  }
+
+  // Scroll the pane so block i's quote (and the reply under it) is in view.
+  private paneScrollTo(i: number) {
+    const id = this.blocks[i]?.id
+    const q = id && (this.paneBack.querySelector(`[data-block-id="${id}"]`) as HTMLElement | null)
+    if (!q) return
+    const top = q.offsetTop
+    const wrap = this.paneWrap
+    if (top - 24 < wrap.scrollTop || top + 80 > wrap.scrollTop + wrap.clientHeight) {
+      wrap.scrollTo({ top: Math.max(0, top - wrap.clientHeight * 0.3), behavior: 'smooth' })
+    }
   }
 
   private onPaneInput() {
@@ -544,11 +562,11 @@ export class Marginer {
       }
       pos = sp.reply + 2
     }
-    ta.focus()
+    ta.focus({ preventScroll: true })
     ta.setSelectionRange(pos, pos)
-    // A textarea scrolls to its caret on focus, not on setSelectionRange.
-    ta.blur(); ta.focus()
     this.onPaneCaret()
+    this.renderPaneBack()
+    this.paneScrollTo(i)
   }
 
   // A selection on the page, with the pane open: the quote goes to the end of
@@ -735,7 +753,6 @@ export class Marginer {
   private layoutBeside() {
     if (this.layout() !== 'beside' || !this.open || !this.highlightsOn) return
     const cards = Array.from(this.besideEl.children).filter((c) => c.classList.contains('mg-card')) as HTMLElement[]
-    this.besideEl.querySelector('.mg-lead')?.remove()
     if (!cards.length) { this.reserve(''); return }
     const { x, w } = this.gutter()
     const GAP = 8
@@ -761,17 +778,6 @@ export class Marginer {
       it.el.style.top = `${top[i]}px`
       requestAnimationFrame(() => it.el.classList.add('mg-settled')) // animate moves, not arrival
     })
-    // A lead from the focused highlight to its card, when the two are level.
-    const it = f >= 0 ? items[f] : null
-    if (it?.line && this.highlightsOn) {
-      const lead = document.createElement('div')
-      lead.className = 'mg-lead'
-      const from = window.scrollX + this.columnRight(this.blockById(it.el.dataset.blockId!)!.ranges[0]) + 4
-      lead.style.left = `${from}px`
-      lead.style.width = `${Math.max(0, x - from - 2)}px`
-      lead.style.top = `${window.scrollY + this.lineCenter(it.line)}px`
-      this.besideEl.appendChild(lead)
-    }
   }
 
   // Written as a method so TypeScript doesn't narrow `cardEditor` to `undefined`
@@ -855,10 +861,10 @@ export class Marginer {
 
   private focus(id: string, scroll: boolean) {
     if (!this.open) {
-      // Collapsed: a click on a note (or its highlight) opens the pane on it.
-      this.mode = 'list'
+      // Collapsed: a click on a highlight (or its peek) brings the notes back
+      // in view mode and opens this one for editing.
+      this.mode = 'beside'
       this.setOpen(true)
-      this.renderAll()
     }
     if (this.paneOpen()) {
       // In the pane, focusing a note means putting the caret on its reply --
@@ -898,7 +904,7 @@ export class Marginer {
 
   // Collapsed, the notes are still a hover away: the hovered highlight's card
   // appears in the gutter beside it, or under it when the page has no gutter.
-  // Clicking the card opens the pane on that reply (via focus()).
+  // Clicking it (or the highlight) brings view mode back with the note open.
   private renderPeek() {
     this.peekEl.innerHTML = ''
     if (this.open || !this.highlightsOn) return
