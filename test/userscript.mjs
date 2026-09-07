@@ -40,7 +40,11 @@ await page.keyboard.down('Meta'); await page.keyboard.down('Shift')
 await page.keyboard.press('KeyU')
 await page.keyboard.up('Shift'); await page.keyboard.up('Meta')
 await new Promise((r) => setTimeout(r, 400))
-ok('⌘⇧U summons the full sidebar', await page.$('.mg-sidebar') !== null && await page.$eval('.mg-sidebar', (e) => e.style.display) === '')
+ok('⌘⇧U summons the full UI', await page.$('.mg-bar') !== null && await page.$eval('.mg-bar', (e) => e.style.display) === '')
+// open the sidebar pane so the note below is written there
+await (async () => { const b = await (await page.$('.mg-bar [data-act="mode"]')).boundingBox(); await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2) })()
+await new Promise((r) => setTimeout(r, 200))
+ok('...and the sidebar opens from its bar', await page.$eval('.mg-sidebar', (e) => e.style.display) === '')
 
 // --- leave a note, so the next visit has something to indicate --------------
 const click = async (sel) => {
@@ -74,8 +78,8 @@ ok('pill names the count in its tooltip', (await page.$eval('.mg-fab', (e) => e.
 ok('sidebar stays closed until asked', await page.$eval('.mg-sidebar', (e) => e.style.display) === 'none')
 ok('highlights are restored', await page.evaluate(() => CSS.highlights.get('marginer')?.size === 1))
 await click('.mg-fab')
-ok('clicking the pill opens the sidebar', await page.$eval('.mg-sidebar', (e) => e.style.display) === '')
-ok('the restored note is there', (await page.$eval('.mg-pane', (e) => e.value)).includes('Left for the next visit.'))
+ok('clicking the pill opens it, notes on the page', await page.evaluate(() => !!document.querySelector('.mg-beside .mg-card')))
+ok('the restored note is there', await page.$eval('.mg-pane', (e) => e.value.includes('Left for the next visit.')))
 
 // --- the bookmarklet and the userscript share one store ----------------------
 await page.reload({ waitUntil: 'load' })

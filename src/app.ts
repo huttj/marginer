@@ -7,7 +7,7 @@ import { serializeBody, stripWrapper } from './export'
 import {
   hasCommentText, parseSpans, renderMarkdown, serializeResponse, splitLeadingEmojis, type RBlock,
 } from './markdown'
-import { getPrefs, loadDoc, loadPrefs, saveDoc, setPref } from './store'
+import { loadDoc, loadPrefs, saveDoc } from './store'
 import { syncImageOverlays } from './overlay'
 import { CSS } from './styles'
 
@@ -59,7 +59,11 @@ export class Marginer {
   private open = true
   // 'list': the sidebar. 'beside': cards float in the page's right gutter,
   // level with their highlights, Google-Docs style.
-  private mode: Mode = 'list'
+  // Boots in view mode: the notes are visible on the page from the start, and
+  // the sidebar (the pane) is a click away. Collapsed, a hovered highlight peeks
+  // its note and a click opens the pane at its reply.
+  private mode: Mode = 'beside'
+  private peekEl!: HTMLElement       // the hover preview, when collapsed
   private reserved = ''             // the html margin we're currently claiming
 
   private styleEl!: HTMLStyleElement
@@ -69,6 +73,7 @@ export class Marginer {
   // `> quote` lines with the reply beneath each. While it has focus it is the
   // source of truth -- the page re-anchors from it as you type.
   private paneEl!: HTMLTextAreaElement
+  private paneBack!: HTMLElement     // mirror layer that tints the quote lines
   private paneEmoji!: HTMLElement
   private paneTimer: any = null
   // A quote the pane just took from a selection, with nothing typed under it yet.
@@ -95,9 +100,8 @@ export class Marginer {
 
   // ---- lifecycle ------------------------------------------------------------
 
-  // Boots minimized: highlights and the note panel are live, and the count sits
-  // in a pill in the corner; the sidebar is a click away. (`collapsed: false`
-  // opens it straight off -- the userscript's ⌘⇧U does that.)
+  // `collapsed` boots as a passive indicator (the userscript on a page it already
+  // knows): highlights and the pill only, notes on hover.
   async init(opts?: { collapsed?: boolean }) {
     this.styleEl = document.createElement('style')
     this.styleEl.setAttribute('data-mg-ui', '')
@@ -115,13 +119,16 @@ export class Marginer {
     this.layer.appendChild(this.besideEl)
 
     await loadPrefs()
-    if (getPrefs().mode === 'beside') this.mode = 'beside'
+    this.peekEl = document.createElement('div')
+    this.peekEl.className = 'mg-beside mg-peek'
+    this.peekEl.setAttribute('data-mg-ui', '')
+    this.layer.appendChild(this.peekEl)
     this.buildSidebar()
     this.buildBar()
 
     const stored = await loadDoc()
     this.setMarkdown(stored?.md ?? '')
-    this.setOpen(opts?.collapsed === false)
+    this.setOpen(!opts?.collapsed)
 
     this.on(document, 'mouseup', (e: MouseEvent) => this.onMouseUp(e))
     this.on(document, 'touchend', (e: TouchEvent) => this.onMouseUp(e as any), { passive: true })
@@ -266,7 +273,9 @@ export class Marginer {
   // highlight spans every line it touches and would put a chip between them.
   private firstLine(b: Block): DOMRect | null {
     if (!b.ranges.length) return null
-    for (const r of Array.from(b.ranges[0].getClientRects())) if (r.width || r.height) return r
+    // A range that starts at a node boundary (after a <br>, say) reports a
+    // zero-width rect on the PREVIOUS line first; only a box with width is a line.
+    for (const r of Array.from(b.ranges[0].getClientRects())) if (r.width) return r
     const rect = b.ranges[0].getBoundingClientRect()
     return rect.width || rect.height ? rect : null
   }
@@ -391,7 +400,10 @@ export class Marginer {
         <button class="mg-tbtn" data-act="hl" title="Show/hide highlights">${ICON.eye}</button>
         <button class="mg-tbtn" data-act="collapse" title="Collapse">${ICON.close}</button>
       </div>
-      <textarea class="mg-pane" data-pane spellcheck="false" placeholder="Select text on the page and it lands here as a quote. Write your reply beneath it."></textarea>
+      <div class="mg-panewrap">
+        <div class="mg-paneback" data-paneback aria-hidden="true"></div>
+        <textarea class="mg-pane" data-pane spellcheck="false" placeholder="Select text on the page and it lands here as a quote. Write your reply beneath it."></textarea>
+      </div>
       <div class="mg-hint">Emoji at the front of a reply are its reactions. <b>⌥-click</b> an image to quote it.</div>
       <div class="mg-panebar" data-emojislot></div>
       <div class="mg-foot">
@@ -400,6 +412,8 @@ export class Marginer {
     document.body.appendChild(bar)
     this.sidebar = bar
     this.paneEl = bar.querySelector('[data-pane]') as HTMLTextAreaElement
+    this.paneBack = bar.querySelector('[data-paneback]') as HTMLElement
+    this.paneEl.addEventListener('scroll', () => { this.paneBack.scrollTop = this.paneEl.scrollTop })
 
     const act = (n: string, f: () => void) => bar.querySelector(`[data-act="${n}"]`)!.addEventListener('click', f)
     act('mode', () => this.setMode('beside'))
@@ -441,9 +455,29 @@ export class Marginer {
   }
 
   // Typing: the text is the document now. Re-anchor shortly after the keys stop.
+  // The quote lines' tint. A textarea can't style its own lines, so a layer
+  // behind it carries the same text (invisible) with the `>` lines marked; the
+  // two wrap identically because they share font, padding and width.
+  private renderPaneBack() {
+    const text = this.paneEl.value
+    const lines = text.split('\n')
+    let o = 0
+    const html = lines.map((l) => {
+      const start = o
+      o += l.length + 1
+      if (!/^\s*>/.test(l)) return esc(l)
+      const k = this.spans.findIndex((sp) => start >= sp.start && start < sp.end)
+      const active = k >= 0 && this.blocks[k]?.id === this.focused
+      return `<span class="mg-q${active ? ' active' : ''}">${esc(l)}</span>`
+    }).join('\n')
+    this.paneBack.innerHTML = html + '\n' // a trailing newline keeps the heights equal
+    this.paneBack.scrollTop = this.paneEl.scrollTop
+  }
+
   private onPaneInput() {
     this.pendingQuote = null
     this.md = this.paneEl.value
+    this.renderPaneBack()
     if (this.paneTimer != null) clearTimeout(this.paneTimer)
     this.paneTimer = setTimeout(() => this.reparsePane(), 150)
   }
@@ -468,6 +502,7 @@ export class Marginer {
     this.renderHighlights()
     this.renderMarginChips()
     this.renderCounts()
+    this.renderPaneBack()
     refreshEmojiPanel(this.paneEmoji)
     void saveDoc(this.md)
   }
@@ -478,6 +513,7 @@ export class Marginer {
     this.focused = id
     this.renderHighlights()
     this.renderMarginChips()
+    this.renderPaneBack()
     refreshEmojiPanel(this.paneEmoji)
   }
 
@@ -613,7 +649,6 @@ export class Marginer {
   setMode(mode: Mode) {
     if (this.mode === mode) return
     this.mode = mode
-    setPref('mode', mode)
     this.applyChrome()
     this.renderAll()
   }
@@ -624,6 +659,7 @@ export class Marginer {
     this.renderCounts()
     // The pane is the source of truth while it has focus; otherwise it follows.
     if (document.activeElement !== this.paneEl && this.paneEl.value !== this.md) this.paneEl.value = this.md
+    this.renderPaneBack()
     refreshEmojiPanel(this.paneEmoji)
 
     // Preserve the open editor across a re-render triggered by something else.
@@ -818,6 +854,12 @@ export class Marginer {
   }
 
   private focus(id: string, scroll: boolean) {
+    if (!this.open) {
+      // Collapsed: a click on a note (or its highlight) opens the pane on it.
+      this.mode = 'list'
+      this.setOpen(true)
+      this.renderAll()
+    }
     if (this.paneOpen()) {
       // In the pane, focusing a note means putting the caret on its reply --
       // every time, even if it's already the active block and merely scrolled away.
@@ -851,6 +893,33 @@ export class Marginer {
     document.querySelectorAll<HTMLElement>('[data-mg-ui][data-block-id]').forEach((el) =>
       el.classList.toggle('mg-emph', el.dataset.blockId === id))
     this.renderHighlights()
+    this.renderPeek()
+  }
+
+  // Collapsed, the notes are still a hover away: the hovered highlight's card
+  // appears in the gutter beside it, or under it when the page has no gutter.
+  // Clicking the card opens the pane on that reply (via focus()).
+  private renderPeek() {
+    this.peekEl.innerHTML = ''
+    if (this.open || !this.highlightsOn) return
+    const blk = this.blockById(this.hovered)
+    const line = blk && this.firstLine(blk)
+    if (!blk || !line) return
+    const card = this.buildCard(blk)
+    card.querySelector('.mg-cardx')?.remove() // read-only glance; edit in the pane
+    this.peekEl.appendChild(card)
+    const colRight = this.columnRight(blk.ranges[0])
+    const vw = document.documentElement.clientWidth
+    if (vw - colRight >= GUTTER) {
+      card.style.width = `${CARD_W}px`
+      card.style.left = `${window.scrollX + colRight + GUTTER_GAP}px`
+      card.style.top = `${window.scrollY + line.top - 4}px`
+    } else {
+      const w = Math.min(320, vw - 24)
+      card.style.width = `${w}px`
+      card.style.left = `${window.scrollX + Math.max(12, Math.min(line.left, vw - 12 - w))}px`
+      card.style.top = `${window.scrollY + line.bottom + 8}px`
+    }
   }
 
   // ---- selection -> new note -----------------------------------------------
@@ -1131,6 +1200,7 @@ export class Marginer {
   setOpen(open: boolean) {
     this.open = open
     this.fab?.remove(); this.fab = undefined
+    this.peekEl.innerHTML = ''
     this.applyChrome()
     this.queueRelayout()  // the page just reflowed around (or back over) the sidebar
     if (open) return

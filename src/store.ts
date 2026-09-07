@@ -39,10 +39,10 @@ export async function loadDoc(key = pageKey()): Promise<Doc | null> {
   }
 }
 
-// Small, cross-page preferences (layout mode, emoji usage). Loaded once at boot
+// Small, cross-page preferences (emoji usage). Loaded once at boot
 // into a cache so the UI can read them synchronously; writes go through the
 // cache and persist in the background.
-export type Prefs = { mode?: 'list' | 'beside'; emojiUse?: Record<string, number> }
+export type Prefs = { emojiUse?: Record<string, number> }
 const PREFS_KEY = PREFIX + 'prefs'
 let prefs: Prefs = {}
 

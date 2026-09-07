@@ -49,9 +49,9 @@ await page.goto('file://' + join(root, 'demo/index.html'), { waitUntil: 'load' }
 await page.evaluate(bundle)
 await new Promise((r) => setTimeout(r, 200))
 
-ok('boots minimized: pill up, sidebar hidden', await page.$('.mg-fab') !== null && await page.$eval('.mg-sidebar', (e) => e.style.display) === 'none')
-await click('.mg-fab')
-ok('pill opens the sidebar', await page.$eval('.mg-sidebar', (e) => e.style.display) === '')
+ok('boots into view mode: notes on the page, sidebar hidden', await page.$eval('.mg-bar', (e) => e.style.display) === '' && await page.$eval('.mg-sidebar', (e) => e.style.display) === 'none')
+await click('.mg-bar [data-act="mode"]')
+ok('the pill bar opens the sidebar', await page.$eval('.mg-sidebar', (e) => e.style.display) === '')
 ok('the sidebar is a text pane, empty for now', await page.$eval('.mg-pane', (e) => e.value) === '')
 ok('page is squeezed by the sidebar width', await page.evaluate(() =>
   parseInt(document.documentElement.style.marginRight) === document.querySelector('.mg-sidebar').offsetWidth))
@@ -272,8 +272,7 @@ ok('it anchors when made', await page.evaluate(() => CSS.highlights.get('margine
 await page.reload({ waitUntil: 'load' })
 await page.evaluate(bundle)
 await new Promise((r) => setTimeout(r, 400))
-await click('.mg-fab')
-ok('view mode is remembered across a reload', await page.evaluate(() => !!document.querySelector('.mg-beside .mg-card')))
+ok('notes show on the page straight after a reload', await page.evaluate(() => !!document.querySelector('.mg-beside .mg-card')))
 ok('and re-anchors after a reload', await page.evaluate(() => CSS.highlights.get('marginer')?.size) === wrapCount)
 const wrapAt = await page.evaluate(() =>
   [...document.querySelectorAll('.mg-beside .mg-card')].findIndex((c) => c.textContent.includes('spans a line break')) + 1)
@@ -285,7 +284,6 @@ await new Promise((r) => setTimeout(r, 300))
 await page.reload({ waitUntil: 'load' })
 await page.evaluate(bundle)
 await new Promise((r) => setTimeout(r, 300))
-await click('.mg-fab')
 ok('notes survive a reload', (await page.$$('.mg-card')).length === 2)
 ok('re-anchored to live text', await page.evaluate(() => CSS.highlights.get('marginer')?.size === 2))
 const md2 = await page.evaluate(() => window.__marginer.markdown())
@@ -325,9 +323,33 @@ await new Promise((r) => setTimeout(r, 150))
 await page.evaluate(bundle) // second injection = collapse
 await new Promise((r) => setTimeout(r, 120))
 ok('re-injecting collapses to the pill', await page.$('.mg-fab') !== null && await page.evaluate(() => !window.__marginer.open))
-await click('.mg-fab')
-await new Promise((r) => setTimeout(r, 120))
-ok('pill re-opens it', await page.evaluate(() => window.__marginer.open && !!document.querySelector('.mg-beside .mg-card')))
+ok('collapsed, the notes leave the page', await page.$eval('.mg-beside:not(.mg-peek)', (e) => e.style.display === 'none'))
+
+// --- collapsed: hover peeks a note, click opens the pane on it ---------------
+const peekAt = await page.evaluate(() => {
+  const b = window.__marginer.blocks.find((x) => x.ranges.length && x.note)
+  b.ranges[0].startContainer.parentElement.scrollIntoView({ block: 'center' })
+  const r = [...b.ranges[0].getClientRects()].find((r) => r.width)
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2, note: b.note, id: b.id }
+})
+await page.mouse.move(peekAt.x, peekAt.y)
+await new Promise((r) => setTimeout(r, 200))
+ok('hovering a highlight peeks its note', await page.evaluate((n) => document.querySelector('.mg-peek .mg-card')?.textContent.includes(n.replace(/^\p{Extended_Pictographic}+\s*/u, '')), peekAt.note))
+await page.mouse.move(peekAt.x, peekAt.y - 200)
+await new Promise((r) => setTimeout(r, 200))
+ok('...and it goes when the mouse leaves', await page.$('.mg-peek .mg-card') === null)
+await page.mouse.click(peekAt.x, peekAt.y)
+await new Promise((r) => setTimeout(r, 300))
+ok('clicking a highlight while collapsed opens the pane on its reply', await page.evaluate((p) => {
+  const ta = document.querySelector('.mg-pane')
+  return window.__marginer.open && ta.style.display !== 'none' && document.activeElement === ta && window.__marginer.blockAtCaret()?.id === p.id
+}, peekAt))
+ok('the quote lines are tinted behind the text', await page.evaluate(() => document.querySelectorAll('.mg-paneback .mg-q').length === window.__marginer.blocks.length))
+ok('the caret block\'s quote is the active one', await page.$$eval('.mg-paneback .mg-q.active', (q) => q.length === 1))
+await page.$eval('.mg-pane', (e) => e.blur())
+await click('.mg-sidebar [data-act="mode"]')
+await new Promise((r) => setTimeout(r, 200))
+ok('back in view mode', await page.evaluate(() => window.__marginer.open && !!document.querySelector('.mg-beside .mg-card')))
 
 // --- deleting from a card, and taking it back --------------------------------
 ok('no delete-everything button in the header', await page.$('.mg-sidebar [data-act="clear"]') === null)
@@ -461,7 +483,7 @@ await page.evaluate((href) => {
 }, bookmarklet)
 await click('#mg-bm-test')
 await new Promise((r) => setTimeout(r, 400))
-ok('bookmarklet boots from a javascript: link', await page.$('.mg-fab') !== null)
+ok('bookmarklet boots from a javascript: link', await page.$('.mg-bar') !== null)
 ok('bookmarklet did not navigate away', page.url().endsWith('demo/index.html'))
 
 ok('no page errors', errs.length === 0, errs.join(' | '))

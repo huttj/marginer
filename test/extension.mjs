@@ -78,7 +78,7 @@ ok('note written to chrome.storage.local', keys.some((k) => k.startsWith('margin
 await page.reload({ waitUntil: 'load' })
 await sw.evaluate((id) => chrome.scripting.executeScript({ target: { tabId: id }, files: ['marginer.js'] }), tabId)
 await new Promise((r) => setTimeout(r, 500))
-ok('note restored after reload', await page.$eval('.mg-fab [data-fabcount]', (e) => e.textContent) === '1')
+ok('note restored after reload', await page.$eval('.mg-bar [data-count]', (e) => e.textContent) === '1')
 
 await browser.close()
 console.log(fails.length ? `\n${fails.length} FAILED: ${fails.join(', ')}` : '\nExtension checks passed.')
