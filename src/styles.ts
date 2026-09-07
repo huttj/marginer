@@ -61,10 +61,20 @@ export const CSS = `
    margin of the same width (set from app.ts), so it sits BESIDE the content
    rather than over it. */
 .mg-sidebar {
-  position: fixed; top: 0; right: 0; bottom: 0; width: 340px; max-width: 92vw;
+  position: fixed; top: 0; right: 0; bottom: 0; width: 380px; max-width: 92vw;
   z-index: 2147483644; display: flex; flex-direction: column;
   background: var(--mg-bg); border-left: 1px solid var(--mg-border);
 }
+/* The document itself: quotes and replies as text, edited in place. */
+.mg-pane {
+  flex: 1; width: 100%; resize: none; border: none; outline: none; margin: 0;
+  padding: 14px 16px; background: var(--mg-bg); color: var(--mg-fg);
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.mg-pane::placeholder { color: var(--mg-muted); }
+.mg-panebar { padding: 6px 10px 8px; border-top: 1px solid var(--mg-border); }
+.mg-panebar .mg-emojipanel { position: relative; }
 .mg-head {
   display: flex; align-items: center; gap: 6px; padding: 8px 10px;
   border-bottom: 1px solid var(--mg-border); flex-shrink: 0;
@@ -80,9 +90,6 @@ export const CSS = `
 .mg-tbtn[disabled] { opacity: .4; cursor: default; }
 .mg-tbtn[disabled]:hover { background: none; }
 
-.mg-list { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
-.mg-empty { flex: 0 0 auto; color: var(--mg-muted); padding: 22px 14px; text-align: center; line-height: 1.6; }
-.mg-empty b { color: var(--mg-fg); }
 
 .mg-foot {
   display: flex; gap: 8px; align-items: center; padding: 8px 10px;

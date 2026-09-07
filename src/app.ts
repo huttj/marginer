@@ -5,7 +5,7 @@ import {
 import { buildEmojiPanel, refreshEmojiPanel } from './emoji'
 import { serializeBody, stripWrapper } from './export'
 import {
-  hasCommentText, parseResponse, renderMarkdown, splitLeadingEmojis, type RBlock,
+  hasCommentText, parseSpans, renderMarkdown, serializeResponse, splitLeadingEmojis, type RBlock,
 } from './markdown'
 import { getPrefs, loadDoc, loadPrefs, saveDoc, setPref } from './store'
 import { syncImageOverlays } from './overlay'
@@ -65,7 +65,17 @@ export class Marginer {
   private styleEl!: HTMLStyleElement
   private layer!: HTMLElement       // document-anchored: margin chips + image boxes
   private sidebar!: HTMLElement
-  private listEl!: HTMLElement
+  // The sidebar is one text pane holding the whole document, Penumbra-style:
+  // `> quote` lines with the reply beneath each. While it has focus it is the
+  // source of truth -- the page re-anchors from it as you type.
+  private paneEl!: HTMLTextAreaElement
+  private paneEmoji!: HTMLElement
+  private paneTimer: any = null
+  // A quote the pane just took from a selection, with nothing typed under it yet.
+  // Clicking away without writing takes it back out, as with the popover.
+  private pendingQuote: string | null = null
+  private preamble = ''             // any prose above the first quote; kept verbatim
+  private spans: { start: number; reply: number; end: number }[] = []
   private bar!: HTMLElement         // view-mode toolbar (the sidebar's head, as a pill)
   private besideEl!: HTMLElement    // view-mode cards, in the document layer
   private fab?: HTMLElement
@@ -85,6 +95,9 @@ export class Marginer {
 
   // ---- lifecycle ------------------------------------------------------------
 
+  // Boots minimized: highlights and the note panel are live, and the count sits
+  // in a pill in the corner; the sidebar is a click away. (`collapsed: false`
+  // opens it straight off -- the userscript's ⌘⇧U does that.)
   async init(opts?: { collapsed?: boolean }) {
     this.styleEl = document.createElement('style')
     this.styleEl.setAttribute('data-mg-ui', '')
@@ -108,9 +121,7 @@ export class Marginer {
 
     const stored = await loadDoc()
     this.setMarkdown(stored?.md ?? '')
-    // Booted as a passive indicator (the userscript path): the highlights and the
-    // pill are up, but the sidebar stays out of the way until it's wanted.
-    this.setOpen(!opts?.collapsed)
+    this.setOpen(opts?.collapsed === false)
 
     this.on(document, 'mouseup', (e: MouseEvent) => this.onMouseUp(e))
     this.on(document, 'touchend', (e: TouchEvent) => this.onMouseUp(e as any), { passive: true })
@@ -175,8 +186,12 @@ export class Marginer {
   // DOM. A piece that no longer matches simply yields no Range: the note survives
   // as an "orphan" card (still exported) rather than being silently dropped.
   private setMarkdown(md: string) {
-    this.md = md
-    const { blocks } = parseResponse(stripWrapper(md))
+    // Normalize once here (drop a legacy `[Title](url)` header, trailing blanks)
+    // so `md` is exactly what the pane shows and the spans line up with it.
+    this.md = stripWrapper(md)
+    const { preamble, blocks, spans } = parseSpans(this.md)
+    this.preamble = preamble
+    this.spans = spans
     this.blocks = blocks.map((b, i) => this.resolve(b, i))
     this.gutterCache = null // the page may have changed under us (that's why we re-anchor)
     this.renderAll()
@@ -207,16 +222,17 @@ export class Marginer {
     this.renderAll()
   }
 
-  // `[Title](url)` header + the blocks. The share-link footer in export.ts stays
-  // off until there is a reader for it (see README, "Not built yet").
+  // Just the quote/note blocks: the document is keyed by URL, so the page needs
+  // no naming inside it, and the export pastes clean. (Older documents carrying a
+  // `[Title](url)` header still load: stripWrapper() drops it.)
   private serialize(): string {
     const rb: RBlock[] = this.blocks.map((b) => ({ quotes: b.quotes, nths: b.nths, note: b.note }))
-    const title = (document.title || location.href).replace(/[[\]]/g, '').trim()
-    return `[${title}](${location.href})\n\n${serializeBody(rb)}`
+    return this.preamble ? serializeResponse(this.preamble, rb) : serializeBody(rb)
   }
 
   // Persist and re-derive everything (drops focus; use saveQuiet while editing).
   private async save() {
+    clearTimeout(this.quietTimer) // a stale autosave must not clobber a newer document
     this.md = this.serialize()
     this.focused = null
     void saveDoc(this.md)
@@ -375,22 +391,171 @@ export class Marginer {
         <button class="mg-tbtn" data-act="hl" title="Show/hide highlights">${ICON.eye}</button>
         <button class="mg-tbtn" data-act="collapse" title="Collapse">${ICON.close}</button>
       </div>
-      <div class="mg-list" data-list></div>
-      <div class="mg-hint">Select any text to add a note. <b>⌥-click</b> an image to note that one.</div>
+      <textarea class="mg-pane" data-pane spellcheck="false" placeholder="Select text on the page and it lands here as a quote. Write your reply beneath it."></textarea>
+      <div class="mg-hint">Emoji at the front of a reply are its reactions. <b>⌥-click</b> an image to quote it.</div>
+      <div class="mg-panebar" data-emojislot></div>
       <div class="mg-foot">
         <button class="mg-btn" data-act="copy">Copy markdown</button>
-        <button class="mg-btn ghost" data-act="view">View</button>
       </div>`
     document.body.appendChild(bar)
     this.sidebar = bar
-    this.listEl = bar.querySelector('[data-list]') as HTMLElement
+    this.paneEl = bar.querySelector('[data-pane]') as HTMLTextAreaElement
 
     const act = (n: string, f: () => void) => bar.querySelector(`[data-act="${n}"]`)!.addEventListener('click', f)
     act('mode', () => this.setMode('beside'))
     act('hl', () => this.toggleHighlights())
     act('collapse', () => this.setOpen(false))
     act('copy', () => this.copyMarkdown())
-    act('view', () => this.showMarkdown())
+
+    const ta = this.paneEl
+    ta.addEventListener('input', () => this.onPaneInput())
+    ta.addEventListener('keydown', (e) => {
+      // ⌘↵ keeps a bare quote (nothing typed under it) that click-away would drop.
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); this.pendingQuote = null; ta.blur() }
+      if (e.key === 'Escape') { e.stopPropagation(); ta.blur() }
+    })
+    // The caret's block is the active one: its highlight brightens on the page.
+    this.on(document, 'selectionchange', () => { if (document.activeElement === ta) this.onPaneCaret() })
+    ta.addEventListener('blur', () => this.flushPane())
+
+    // Reactions for the reply under the caret. Typing the emoji does the same.
+    this.paneEmoji = buildEmojiPanel(() => this.blockAtCaret()?.note ?? '', (note) => {
+      this.flushPane()
+      const blk = this.blockAtCaret()
+      if (!blk) return
+      blk.note = note
+      this.syncDerived(blk)
+      this.replaceDoc(this.serialize(), blk.id)
+    })
+    bar.querySelector('[data-emojislot]')!.appendChild(this.paneEmoji)
+  }
+
+  // ---- the text pane ---------------------------------------------------------
+
+  private paneOpen = () => this.open && this.layout() === 'list'
+
+  private blockAtCaret(): Block | undefined {
+    const pos = this.paneEl.selectionStart
+    const i = this.spans.findIndex((sp) => pos >= sp.start && pos <= sp.end)
+    return i >= 0 ? this.blocks[i] : undefined
+  }
+
+  // Typing: the text is the document now. Re-anchor shortly after the keys stop.
+  private onPaneInput() {
+    this.pendingQuote = null
+    this.md = this.paneEl.value
+    if (this.paneTimer != null) clearTimeout(this.paneTimer)
+    this.paneTimer = setTimeout(() => this.reparsePane(), 150)
+  }
+
+  // Anything that rebuilds the document from `blocks` must see what was just
+  // typed, debounce or no debounce.
+  private flushPane() {
+    if (this.paneTimer == null) return
+    clearTimeout(this.paneTimer)
+    this.paneTimer = null
+    this.reparsePane()
+  }
+
+  private reparsePane() {
+    this.paneTimer = null
+    this.md = this.paneEl.value
+    const { preamble, blocks, spans } = parseSpans(this.md)
+    this.preamble = preamble
+    this.spans = spans
+    this.blocks = blocks.map((b, i) => this.resolve(b, i))
+    this.onPaneCaret()
+    this.renderHighlights()
+    this.renderMarginChips()
+    this.renderCounts()
+    refreshEmojiPanel(this.paneEmoji)
+    void saveDoc(this.md)
+  }
+
+  private onPaneCaret() {
+    const id = this.blockAtCaret()?.id ?? null
+    if (id === this.focused) return
+    this.focused = id
+    this.renderHighlights()
+    this.renderMarginChips()
+    refreshEmojiPanel(this.paneEmoji)
+  }
+
+  // Put a new document in the pane, keeping the caret on `atBlock`'s reply line.
+  private replaceDoc(md: string, atBlock: string | null) {
+    this.setMarkdown(md)
+    this.paneEl.value = this.md
+    const i = this.blocks.findIndex((b) => b.id === atBlock)
+    if (i >= 0) this.caretTo(i)
+    void saveDoc(this.md)
+  }
+
+  // Drop the caret at the end of block i's reply (adding the blank reply line
+  // under a bare quote), and bring it into view.
+  private caretTo(i: number) {
+    const ta = this.paneEl
+    const sp = this.spans[i]
+    if (!sp) return
+    let pos = sp.reply
+    if (pos === sp.start || !this.blocks[i].note) {
+      // Nothing under the quote yet: make sure there's a line to write on.
+      const after = ta.value.slice(sp.reply)
+      const have = /^\n\n/.test(after) ? 2 : /^\n/.test(after) ? 1 : 0
+      if (have < 2) {
+        ta.value = ta.value.slice(0, sp.reply) + '\n\n'.slice(have) + after
+        this.md = ta.value
+        this.spans = parseSpans(this.md).spans
+      }
+      pos = sp.reply + 2
+    }
+    ta.focus()
+    ta.setSelectionRange(pos, pos)
+    // A textarea scrolls to its caret on focus, not on setSelectionRange.
+    ta.blur(); ta.focus()
+    this.onPaneCaret()
+  }
+
+  // A selection on the page, with the pane open: the quote goes to the end of
+  // the document and the caret to the line beneath it, ready for the reply.
+  private appendQuote(range: Range) {
+    const pieces = quotePiecesFromRange(range, document.body)
+    if (!pieces?.quotes.length) return
+    this.flushPane()
+    this.dropPendingQuote()
+    const blk: Block = {
+      id: `b${this.blocks.length}`, quotes: pieces.quotes, nths: pieces.nths,
+      note: '', emojis: [], text: '', ranges: [range], imgs: imagesInRange(range, document.body),
+    }
+    this.blocks.push(blk)
+    window.getSelection()?.removeAllRanges() // before the pane takes focus, or it would unseat the caret
+    this.replaceDoc(this.serialize(), blk.id)
+    this.pendingQuote = this.blocks[this.blocks.length - 1]?.id ?? null
+  }
+
+  private dropPendingQuote() {
+    const id = this.pendingQuote
+    this.pendingQuote = null
+    this.flushPane()
+    const pq = this.blockById(id)
+    if (!pq || pq.note.trim()) return
+    this.blocks = this.blocks.filter((b) => b !== pq)
+    this.replaceDoc(this.serialize(), null)
+    this.paneEl.blur()
+  }
+
+  private renderCounts() {
+    const n = this.blocks.length
+    for (const root of [this.sidebar, this.bar]) {
+      (root.querySelector('[data-count]') as HTMLElement).textContent = n ? String(n) : ''
+      const hlBtn = root.querySelector('[data-act="hl"]') as HTMLElement
+      hlBtn.innerHTML = this.highlightsOn ? ICON.eye : ICON.eyeOff
+      hlBtn.classList.toggle('active', !this.highlightsOn)
+      ;(root.querySelector('[data-act="copy"]') as HTMLButtonElement).disabled = !n
+    }
+    if (this.fab) {
+      this.fab.querySelector('[data-fabcount]')!.textContent = String(n)
+      this.fab.title = n ? `${n} note${n === 1 ? '' : 's'} on this page — click to open` : 'Open Marginer'
+    }
   }
 
   // View mode has no sidebar, so its controls live in a pill where the collapsed
@@ -453,34 +618,22 @@ export class Marginer {
     this.renderAll()
   }
 
+  // The pane shows the document; view mode shows it as floating cards.
   private renderCards() {
     const list = this.ordered()
-    for (const root of [this.sidebar, this.bar]) {
-      (root.querySelector('[data-count]') as HTMLElement).textContent = list.length ? String(list.length) : ''
-      const hlBtn = root.querySelector('[data-act="hl"]') as HTMLElement
-      hlBtn.innerHTML = this.highlightsOn ? ICON.eye : ICON.eyeOff
-      hlBtn.classList.toggle('active', !this.highlightsOn)
-      ;(root.querySelector('[data-act="copy"]') as HTMLButtonElement).disabled = !list.length
-    }
-    ;(this.sidebar.querySelector('[data-act="view"]') as HTMLButtonElement).disabled = !list.length
-    if (this.fab) {
-      this.fab.querySelector('[data-fabcount]')!.textContent = String(list.length)
-      this.fab.title = list.length ? `${list.length} note${list.length === 1 ? '' : 's'} on this page — click to open` : 'Open Marginer'
-    }
+    this.renderCounts()
+    // The pane is the source of truth while it has focus; otherwise it follows.
+    if (document.activeElement !== this.paneEl && this.paneEl.value !== this.md) this.paneEl.value = this.md
+    refreshEmojiPanel(this.paneEmoji)
 
     // Preserve the open editor across a re-render triggered by something else.
     const editing = this.cardEditor ? { id: this.focused, val: this.cardEditor.value, sel: this.cardEditor.selectionStart } : null
     this.detachEditor()
-    const beside = this.layout() === 'beside'
-    const host = beside ? this.besideEl : this.listEl
-    this.listEl.innerHTML = ''
     this.besideEl.innerHTML = ''
-    if (!list.length) {
-      this.listEl.innerHTML = `<div class="mg-empty">No notes yet.<br>Select any text on the page to start one.</div>`
-      return
-    }
-    for (const blk of list) host.appendChild(this.buildCard(blk))
-    if (beside) this.layoutBeside()
+    if (this.layout() !== 'beside') return
+    if (!list.length) { this.reserve(''); return } // nothing to make room for
+    for (const blk of list) this.besideEl.appendChild(this.buildCard(blk))
+    this.layoutBeside()
     const ed: HTMLTextAreaElement | undefined = this.cardEditor
     if (ed && editing?.id && this.focused === editing.id) {
       ed.value = editing.val
@@ -665,6 +818,17 @@ export class Marginer {
   }
 
   private focus(id: string, scroll: boolean) {
+    if (this.paneOpen()) {
+      // In the pane, focusing a note means putting the caret on its reply --
+      // every time, even if it's already the active block and merely scrolled away.
+      this.flushPane()
+      const i = this.blocks.findIndex((b) => b.id === id)
+      if (i < 0) return
+      this.closeCompose(false)
+      if (scroll && this.blocks[i].ranges.length) this.scrollToRange(this.blocks[i].ranges[0])
+      this.caretTo(i)
+      return
+    }
     if (this.focused === id) return
     if (this.cardEditor) { const prev = this.blockById(this.focused); if (prev) { prev.note = this.cardEditor.value; this.syncDerived(prev) } }
     this.closeCompose(false)
@@ -673,10 +837,6 @@ export class Marginer {
     this.renderAll()
     const blk = this.blockById(id)
     if (scroll && blk?.ranges.length) this.scrollToRange(blk.ranges[0])
-    // A floating card is level with its highlight, so the scroll above covers it.
-    if (this.layout() === 'beside') return
-    const card = this.listEl.querySelector(`[data-block-id="${id}"]`)
-    card?.scrollIntoView({ block: 'nearest' })
   }
 
   private scrollToRange(r: Range) {
@@ -715,7 +875,8 @@ export class Marginer {
     // A selection with no text is still worth taking if it holds an image --
     // that's how a figure gets annotated.
     if (!sel.toString().trim() && !imagesInRange(range, document.body).length) return
-    this.openCompose(range.cloneRange())
+    if (this.paneOpen()) this.appendQuote(range.cloneRange())
+    else this.openCompose(range.cloneRange())
   }
 
   // Selecting inside a form field or a rich-text editor is someone writing, not
@@ -735,7 +896,7 @@ export class Marginer {
     e.preventDefault(); e.stopPropagation()
     const r = document.createRange()
     r.selectNode(t)
-    this.openCompose(r)
+    if (this.paneOpen()) this.appendQuote(r); else this.openCompose(r)
   }
 
   // The note panel. It opens on the selection itself, and it commits as you go:
@@ -897,6 +1058,7 @@ export class Marginer {
     // Click-away from an open panel keeps whatever is in it (matching the card
     // editors, which autosave) -- but an untouched panel is simply dropped.
     if (this.compose) { this.closeCompose(false); return }
+    if (this.pendingQuote) { this.dropPendingQuote(); return }
     if (this.cardEditor && this.focused) {
       const blk = this.blockById(this.focused)
       if (blk) this.commitCard(blk, this.cardEditor)
@@ -947,7 +1109,8 @@ export class Marginer {
       const sel = window.getSelection()
       if (sel && !sel.isCollapsed && sel.rangeCount && sel.toString().trim()) {
         e.preventDefault()
-        this.openCompose(sel.getRangeAt(0).cloneRange())
+        if (this.paneOpen()) this.appendQuote(sel.getRangeAt(0).cloneRange())
+        else this.openCompose(sel.getRangeAt(0).cloneRange())
       }
       return
     }

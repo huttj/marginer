@@ -56,10 +56,13 @@ await page.evaluate(() => {
     document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); return }
 })
 await new Promise((r) => setTimeout(r, 200))
-await page.$eval('.mg-compose textarea', (e) => e.focus())
+// With the sidebar open, the selection lands in its text pane as a quote, with
+// the caret beneath it -- the reply is typed straight in.
+ok('selection lands in the pane as a quote', await page.$eval('.mg-pane', (e) => document.activeElement === e && e.value.includes('> argument in miniature')))
 await page.keyboard.type('Left for the next visit.')
-await click('.mg-compose [data-act="save"]')
-await new Promise((r) => setTimeout(r, 300))
+await new Promise((r) => setTimeout(r, 400))
+await page.$eval('.mg-pane', (e) => e.blur())
+await new Promise((r) => setTimeout(r, 200))
 
 // --- revisit: the indicator appears on its own -------------------------------
 await page.reload({ waitUntil: 'load' })
@@ -72,13 +75,13 @@ ok('sidebar stays closed until asked', await page.$eval('.mg-sidebar', (e) => e.
 ok('highlights are restored', await page.evaluate(() => CSS.highlights.get('marginer')?.size === 1))
 await click('.mg-fab')
 ok('clicking the pill opens the sidebar', await page.$eval('.mg-sidebar', (e) => e.style.display) === '')
-ok('the restored note is there', (await page.$$('.mg-card')).length === 1)
+ok('the restored note is there', (await page.$eval('.mg-pane', (e) => e.value)).includes('Left for the next visit.'))
 
 // --- the bookmarklet and the userscript share one store ----------------------
 await page.reload({ waitUntil: 'load' })
 await page.evaluate(core) // the bookmarklet/extension bundle
 await new Promise((r) => setTimeout(r, 400))
-ok('bookmarklet sees the userscript’s notes', (await page.$$('.mg-card')).length === 1)
+ok('bookmarklet sees the userscript’s notes', await page.evaluate(() => window.__marginer.blocks.length === 1 && CSS.highlights.get('marginer')?.size === 1))
 ok('...and exports them', (await page.evaluate(() => window.__marginer.markdown())).includes('Left for the next visit.'))
 
 ok('no page errors', errs.length === 0, errs.join(' | '))

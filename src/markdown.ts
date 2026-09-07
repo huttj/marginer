@@ -43,7 +43,7 @@ export function extractBlockquotes(md: string): string[] {
 // and the note it owns.
 export type RBlock = { quotes: string[]; nths: number[]; note: string }
 
-const isQ = (l: string | undefined) => /^\s*>/.test(l ?? '')
+export const isQ = (l: string | undefined) => /^\s*>/.test(l ?? '')
 
 // Split a quote's text into ordered pieces — text runs and `![](src)` images,
 // inline OR on their own line (the caller joins the blockquote's lines first, so
@@ -69,13 +69,27 @@ export function splitQuotePieces(text: string): string[] {
 // Each quote is its own block and owns the prose below it until the next quote
 // (so two back-to-back quotes stay two separate comments, not one).
 export function parseResponse(md: string): { preamble: string; blocks: RBlock[] } {
+  return parseSpans(md)
+}
+
+// parseResponse, plus where each block sits in the text: `start` is the offset
+// of its first quote line, `reply` the offset just past its last non-blank note
+// line (or past the quote group when there is no note yet) -- the place a caret
+// goes to continue the reply. The text pane uses these to map caret <-> block.
+export function parseSpans(md: string): { preamble: string; blocks: RBlock[]; spans: { start: number; reply: number; end: number }[] } {
   const lines = (md ?? '').replace(/\r\n/g, '\n').split('\n')
+  // Character offset of the start of each line, so spans can be reported.
+  const at: number[] = []
+  for (let k = 0, o = 0; k < lines.length; k++) { at.push(o); o += lines[k].length + 1 }
+  const endOf = (k: number) => at[k] + lines[k].length
   let i = 0
   const preamble: string[] = []
   while (i < lines.length && !isQ(lines[i])) { preamble.push(lines[i]); i++ }
 
   const blocks: RBlock[] = []
+  const spans: { start: number; reply: number; end: number }[] = []
   while (i < lines.length) {
+    const start = at[i]
     const qlines: { text: string; nth: number }[] = []
     while (i < lines.length && isQ(lines[i])) {
       const pm = parseQuoteMarker(lines[i])
@@ -85,12 +99,17 @@ export function parseResponse(md: string): { preamble: string; blocks: RBlock[] 
       if (text) qlines.push({ text, nth: pm.nth })
       i++
     }
+    const qEnd = endOf(i - 1)
     const note: string[] = []
+    const noteAt = i
     while (i < lines.length && !isQ(lines[i])) { note.push(lines[i]); i++ }
     // Drop the leading gap blank(s) after the quote and ALL trailing blank lines
     // (incl. the zero-width sentinel) — comments never keep trailing blanks now.
     while (note.length && note[0].trim() === '') note.shift()
+    let lastNote = i - 1
+    while (lastNote >= noteAt && lines[lastNote].replace(/​/g, '').trim() === '') lastNote--
     while (note.length && note[note.length - 1].replace(/​/g, '').trim() === '') note.pop()
+    spans.push({ start, reply: lastNote >= noteAt ? endOf(lastNote) : qEnd, end: i < lines.length ? at[i] : (md ?? '').length })
     // Join the blockquote's lines, then split into ordered pieces (text runs +
     // images). A pure-text blockquote yields a single piece — the long-standing
     // passage — so ordinary quotes are unchanged. The occurrence index pins the
@@ -103,7 +122,7 @@ export function parseResponse(md: string): { preamble: string; blocks: RBlock[] 
     }
     blocks.push({ quotes, nths, note: note.join('\n') })
   }
-  return { preamble: preamble.join('\n').trim(), blocks }
+  return { preamble: preamble.join('\n').trim(), blocks, spans }
 }
 
 // Round-trip the structure back to markdown. Notes carry no trailing blanks, and

@@ -47,6 +47,11 @@ await annotate('digital reading was never', 'Is this true? Kindle highlights, In
 const shot = async (name) => { await page.screenshot({ path: join(root, `test/.shots/${name}.png`) }) }
 await page.evaluate(() => window.scrollTo(0, 0))
 await new Promise((r) => setTimeout(r, 350))
+await shot(dark ? 'minimized-dark' : 'minimized')
+
+// the sidebar: the document as one text pane
+await click('.mg-fab')
+await new Promise((r) => setTimeout(r, 400))
 await shot(dark ? 'overview-dark' : 'overview')
 
 // view mode: cards beside the text, one pinned to its highlight
@@ -54,15 +59,12 @@ await click('.mg-sidebar [data-act="mode"]')
 await new Promise((r) => setTimeout(r, 400))
 await click('.mg-beside .mg-card:nth-child(4)')
 await new Promise((r) => setTimeout(r, 400))
-await shot(dark ? 'beside-dark' : 'beside')
-await page.keyboard.press('Escape')
-await click('.mg-bar [data-act="mode"]')
-await new Promise((r) => setTimeout(r, 300))
-
-// focused (editing) card
-await click('.mg-card:nth-child(2)')
-await new Promise((r) => setTimeout(r, 300))
 await shot(dark ? 'focused-dark' : 'focused')
+await page.keyboard.press('Escape')
+await new Promise((r) => setTimeout(r, 300))
+await shot(dark ? 'beside-dark' : 'beside')
+await click('.mg-bar [data-act="collapse"]')
+await new Promise((r) => setTimeout(r, 300))
 
 // compose popover
 await page.keyboard.press('Escape')

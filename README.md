@@ -21,8 +21,6 @@ Quartz site, so it works on pages you don't own.
 no separate serializer. A page's notes are a single markdown string:
 
 ```markdown
-[On Marginalia](https://example.com/marginalia)
-
 > the only honest reading anyone ever gives a text
 
 🔥 Overstated, but I like it. Compare Coleridge on Kant.
@@ -34,8 +32,10 @@ no separate serializer. A page's notes are a single markdown string:
 ```
 
 That string is what gets saved, what gets re-parsed and re-anchored on the next
-visit, and what lands on your clipboard. Nothing can drift out of sync with the
-export, because there's nothing else to drift.
+visit, what lands on your clipboard — and what the sidebar *is*: one text pane
+holding the document, edited in place, Penumbra-style. Nothing can drift out of
+sync with the export, because there's nothing else to drift. (The page's URL is
+the storage key, so the document carries no title line.)
 
 A note's **leading emoji are its reactions** — and that's the whole mechanism,
 not a convention layered on top. There is no separate reactions field: the note
@@ -117,23 +117,29 @@ notes taken with either show up under the other and you can install both.
 
 ## Using it
 
+It boots minimized: highlights and the note panel are live, and a pill in the
+corner shows the count. Click the pill (or the toolbar icon again) for the
+sidebar.
+
 | | |
 |---|---|
 | Select any text | the note panel opens on the spot, beside the selection |
+| Select with the sidebar open | the quote lands at the end of the pane, caret on the line beneath — type the reply |
 | Click a reaction | lands immediately — margin chip and card appear as you click |
 | Type an emoji at the front | identical to picking one; the margin updates as you type |
-| ＋ in the picker | the full CLDR set, ~1,900 emoji, searchable |
+| ＋ in the picker | the full CLDR set, ~1,900 emoji, searchable; your most-used lead it |
 | Reactions per note | no limit — the bar wraps rather than hiding any |
-| Click away | keeps what you wrote; an untouched panel leaves no trace |
+| Click away | keeps what you wrote; an untouched panel (or a quote with nothing under it) leaves no trace |
 | ⌘↵ | save, including a bare highlight with no note |
 | Esc | cancel the whole thing |
 | ⌥-click an image | annotate a figure on its own |
-| Click a card | scrolls to its highlight and opens it for editing |
-| Click a highlight | the other way round: opens its card for editing |
-| ✕ on a card | deletes it, with an undo in the toast |
+| Edit the pane | the page re-anchors as you type; delete a `>` line and its highlight goes |
+| Click a highlight | drops the caret at the end of its reply (in view mode: opens its card) |
+| The caret's block | is the active one — its highlight brightens on the page |
+| ⊞ in the header | **view mode**: cards float beside the text, level with their highlights |
+| Click a card | scrolls to its highlight and opens it for editing; ✕ deletes it, with an undo |
 | 👁 | hide highlights to read the page clean |
-| ⊞ in the header | **view mode**: the sidebar goes away and the cards sit beside the text, level with their highlights |
-| **Copy markdown** | the whole page's notes, ready to paste |
+| **Copy markdown** | the whole document, ready to paste |
 
 The sidebar **squeezes the page rather than covering it**: while it's open the
 document gets a right margin of the sidebar's width, so a centered column
@@ -142,8 +148,8 @@ that margin — nothing to be done there.)
 
 **View mode** is the Google-Docs layout. Cards float in the page's right
 gutter at the height of their highlight; where two would collide they stack
-downward, and the card you're editing pins itself level with its highlight and
-pushes its neighbours out of the way. A full-bleed page with no gutter has one
+downward, and the card you're editing pins itself level with its highlight
+(a short lead line joins the two) and pushes its neighbours out of the way. A full-bleed page with no gutter has one
 squeezed out of it, by the same margin trick — and since squeezing a centered
 column only yields half the margin as gutter, the code measures what one push
 gained and extrapolates rather than iterating. The choice of mode is
@@ -167,7 +173,7 @@ dims to show the anchor is stale, and it still exports.
 | | |
 |---|---|
 | `src/anchor.ts` | text + image anchoring, lifted from Penumbra. Maps a flat string of the page's visible text to live DOM positions; resolves quotes back to `Range`s |
-| `src/markdown.ts` | the document model: parse/serialize `> quote` + note blocks, split leading emoji, render notes to HTML |
+| `src/markdown.ts` | the document model: parse/serialize `> quote` + note blocks (with text spans, so the pane can map caret ↔ block), split leading emoji, render notes to HTML |
 | `src/emoji-data.ts` | generated: ~1,900 emoji as codepoints + CLDR names + keywords. Rebuild with `tools/gen-emoji.py` |
 
 **Why the emoji list is a data file and not a loop.** You can walk the emoji
@@ -177,7 +183,7 @@ range walk produces. And a loop yields no names, so there is nothing to search:
 codepoints alone are 17 KB, CLDR names take it to 43 KB, and the emojilib
 keywords (what makes "lol" find 🤣) take it to 84 KB. The searchable half is the
 expensive half, and it is the half worth having.
-| `src/app.ts` | the whole UI — sidebar, view mode, compose popover, margin chips, highlight painting |
+| `src/app.ts` | the whole UI — the text pane, view mode, compose popover, margin chips, highlight painting |
 | `src/store.ts` | `chrome.storage.local`, or `localStorage` for the bookmarklet; also the small cross-page prefs (layout mode, emoji usage) |
 | `src/userscript.ts` | userscript shell: stays dormant until a page it already knows about shows up |
 | `extension/` | MV3 shell: a background worker that injects the bundle on click |
