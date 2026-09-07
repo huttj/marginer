@@ -33,14 +33,20 @@ export async function serializeDoc(
   return `[${title}](${meta.url})\n\n${body}${footer}`
 }
 
-// Drop the source header and the trailing link, leaving just the quote/note blocks.
+// The one line a pasted comment carries for anyone who wonders how to see the
+// highlights in place. Appended on export (not stored), stripped on load.
+export const FOOTER = '✍️ marginer.app — see these highlights on the page'
+export const withFooter = (md: string) => `${md.replace(/\s+$/, '')}\n\n${FOOTER}\n`
+
+// Drop the source header and the trailing attribution, leaving just the
+// quote/note blocks.
 export function stripWrapper(md: string): string {
   const lines = (md ?? '').replace(/^\ufeff/, '').replace(HEADER_RE, '').split('\n')
-  // Walk back over the footer: the link line, its `---` rule, and any blank lines.
+  // Walk back over the footer: the attribution/link line, a `---` rule, blanks.
   while (lines.length) {
     const last = lines[lines.length - 1]
     LINK_RE.lastIndex = 0
-    if (!last.trim() || /^-{3,}$/.test(last.trim()) || LINK_RE.test(last)) lines.pop()
+    if (!last.trim() || /^-{3,}$/.test(last.trim()) || LINK_RE.test(last) || /marginer\.app/i.test(last)) lines.pop()
     else break
   }
   return lines.join('\n')

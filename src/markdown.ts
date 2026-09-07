@@ -40,10 +40,31 @@ export function extractBlockquotes(md: string): string[] {
 }
 
 // A response block: a quote (one or more '>' lines, with its occurrence index)
-// and the note it owns.
-export type RBlock = { quotes: string[]; nths: number[]; note: string }
+// and the note it owns. A REPLY to someone else's note carries that note too,
+// as `re`: it is written email-style, the article quote nested one level deeper
+// than the note being answered --
+//
+//   > > the only honest reading anyone ever gives a text
+//   > Overstated, but I like it.
+//
+//   I don't think it's overstated.
+//
+// In any group of '>' lines the DEEPEST level is the article quote (what the
+// block anchors to) and everything shallower is `re`. A plain `> quote` group
+// is depth 1 throughout, so ordinary notes are unchanged.
+export type RBlock = { quotes: string[]; nths: number[]; note: string; re?: string }
 
 export const isQ = (l: string | undefined) => /^\s*>/.test(l ?? '')
+
+// Depth of a quote line (`> > x` and `>> x` are both 2) and the text past the markers.
+export function quoteDepth(line: string): { depth: number; rest: string } {
+  const m = /^\s*((?:>\s*)+)/.exec(line ?? '')
+  if (!m) return { depth: 0, rest: line ?? '' }
+  const depth = (m[1].match(/>/g) ?? []).length
+  // Keep the last marker on `rest` so parseQuoteMarker can read a `>N ` index.
+  const rest = '>' + line.slice(m[0].length - (m[1].endsWith(' ') ? 1 : 0)).replace(/^>/, '')
+  return { depth, rest }
+}
 
 // Split a quote's text into ordered pieces — text runs and `![](src)` images,
 // inline OR on their own line (the caller joins the blockquote's lines first, so
@@ -90,15 +111,22 @@ export function parseSpans(md: string): { preamble: string; blocks: RBlock[]; sp
   const spans: { start: number; reply: number; end: number }[] = []
   while (i < lines.length) {
     const start = at[i]
-    const qlines: { text: string; nth: number }[] = []
+    const raw: { depth: number; text: string; nth: number }[] = []
     while (i < lines.length && isQ(lines[i])) {
-      const pm = parseQuoteMarker(lines[i])
+      const { depth, rest } = quoteDepth(lines[i])
+      const pm = parseQuoteMarker(rest)
       // Tolerate editor-mangled lines: trailing `\` hard-breaks and the zero-width
       // sentinel that older saves left inside quotes.
       const text = pm.text.replace(/\\\s*$/, '').replace(/​/g, '').trim()
-      if (text) qlines.push({ text, nth: pm.nth })
+      raw.push({ depth, text, nth: pm.nth })
       i++
     }
+    // The deepest level is the article quote; anything shallower is the note
+    // this block replies to.
+    const deepest = Math.max(1, ...raw.map((l) => l.depth))
+    const qlines = raw.filter((l) => l.depth === deepest && l.text)
+    const reLines = deepest > 1 ? raw.filter((l) => l.depth < deepest).map((l) => l.text) : []
+    const re = reLines.join('\n').trim()
     const qEnd = endOf(i - 1)
     const note: string[] = []
     const noteAt = i
@@ -120,7 +148,7 @@ export function parseSpans(md: string): { preamble: string; blocks: RBlock[]; sp
       quotes = splitQuotePieces(qlines.map((l) => l.text).join(' '))
       nths = quotes.map((_, i) => (i === 0 ? qlines[0].nth : 1))
     }
-    blocks.push({ quotes, nths, note: note.join('\n') })
+    blocks.push(re ? { quotes, nths, note: note.join('\n'), re } : { quotes, nths, note: note.join('\n') })
   }
   return { preamble: preamble.join('\n').trim(), blocks, spans }
 }
@@ -136,7 +164,10 @@ export function serializeResponse(preamble: string, blocks: RBlock[]): string {
     // Pieces (text + images) join inline into one '>' line, so an in-quote image
     // is an inline embed — the editor flows it inline and the cursor can sit on
     // either side. The occurrence index rides on the first piece.
-    const qs = pieces.length ? formatQuoteMarker(b.nths?.[0] ?? 1, pieces.join(' ')) : ''
+    let qs = pieces.length ? formatQuoteMarker(b.nths?.[0] ?? 1, pieces.join(' ')) : ''
+    // A reply: the article quote one level deeper than the note it answers.
+    const re = (b.re ?? '').trim()
+    if (qs && re) qs = `> ${qs}\n` + re.split('\n').map((l) => (l.trim() ? `> ${l}` : '>')).join('\n')
     blockStrs.push(qs && note ? `${qs}\n\n${note}` : qs || note)
   }
   const blockBody = blockStrs.join('\n\n\n') // '\n\n\n' = one extra blank line before quotes 2..n

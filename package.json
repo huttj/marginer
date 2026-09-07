@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
-    "test": "node test/smoke.mjs && node test/csp.mjs && node test/userscript.mjs && node test/extension.mjs",
+    "test": "node test/smoke.mjs && node test/csp.mjs && node test/userscript.mjs && node test/extension.mjs && node test/threads.mjs",
     "shots": "node test/shot.mjs && node test/shot.mjs --dark",
     "deploy": "npm run build && npx wrangler pages deploy dist --project-name=marginer --branch=main --commit-dirty=true"
   },

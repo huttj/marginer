@@ -168,6 +168,32 @@ export const CSS = `
   font-size: 13px; line-height: 1; filter: drop-shadow(0 1px 1px rgba(0,0,0,.2));
 }
 
+/* ---- other readers' notes: the picker, and their (read-only) cards ---- */
+.mg-select {
+  font: inherit; font-size: 12.5px; color: var(--mg-fg); background: var(--mg-chip);
+  border: 1px solid var(--mg-border); border-radius: 7px; padding: 3px 6px; max-width: 150px;
+  cursor: pointer;
+}
+.mg-select:hover { background: var(--mg-chip-hover); }
+.mg-thread { padding: 0 12px 10px; display: flex; flex-direction: column; gap: 8px; }
+.mg-entry { position: relative; padding-left: 8px; border-left: 2px solid var(--mg-border); }
+.mg-entry:first-child { padding-left: 0; border-left: none; }
+.mg-who { font-size: 12px; color: var(--mg-muted); margin-bottom: 2px; }
+.mg-who b { color: var(--mg-fg); font-weight: 600; }
+.mg-who a { color: var(--mg-muted); text-decoration: none; margin-left: 2px; }
+.mg-who a:hover { color: var(--mg-accent); }
+.mg-entry-emoji { font-size: 13px; line-height: 1; margin-top: 4px; }
+.mg-entry .mg-btn.tiny { margin-top: 6px; padding: 2px 8px; font-size: 11.5px; }
+.mg-card.mg-foreign .mg-md { display: block; -webkit-line-clamp: unset; }
+.mg-sidebar.mg-foreign .mg-pane { color: var(--mg-muted); }
+.mg-sidebar.mg-foreign .mg-panebar, .mg-sidebar.mg-foreign .mg-hint { display: none; }
+/* the reply panel: the note being answered, above the box */
+.mg-re {
+  font-size: 12.5px; color: var(--mg-muted); margin: 0 0 8px; padding: 4px 8px 4px 10px;
+  border-left: 2px solid var(--mg-border); overflow-wrap: anywhere; max-height: 22vh; overflow-y: auto;
+}
+.mg-re b { color: var(--mg-fg); font-weight: 600; }
+
 /* ---- view mode: the same cards, floating in the page's right gutter ---- */
 .mg-beside .mg-card {
   position: absolute; z-index: 2147483643; box-shadow: 0 1px 4px rgba(0,0,0,.08);

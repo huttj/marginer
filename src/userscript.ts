@@ -1,4 +1,5 @@
 import { Marginer } from './app'
+import { completePendingReply } from './comments'
 import { loadDoc } from './store'
 
 // The userscript shell. Unlike the bookmarklet and the extension — which only run
@@ -31,6 +32,7 @@ document.addEventListener('keydown', (e) => {
 })
 
 async function boot() {
+  completePendingReply() // a reply that came here via a comment permalink
   const doc = await loadDoc()
   if (!doc?.md?.trim()) return // no notes here — stay out of the way entirely
   await summon(true)

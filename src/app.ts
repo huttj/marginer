@@ -2,8 +2,9 @@ import {
   imageQuoteFromImg, imageOccurrence, imageSrcOf, imagesInRange,
   quotePiecesFromRange, resolveImageQuote, resolveNthQuote,
 } from './anchor'
+import { buildThreads, detectSite, fillTextarea, groupByAnchor, type Entry, type Site, type Thread } from './comments'
 import { buildEmojiPanel, refreshEmojiPanel } from './emoji'
-import { serializeBody, stripWrapper } from './export'
+import { serializeBody, stripWrapper, withFooter } from './export'
 import {
   hasCommentText, parseSpans, renderMarkdown, serializeResponse, splitLeadingEmojis, type RBlock,
 } from './markdown'
@@ -24,7 +25,14 @@ type Block = {
   text: string
   ranges: Range[]
   imgs: HTMLImageElement[]
+  // Someone else's: the entries (from the page's comments) quoting this passage,
+  // in thread order. Read-only on the page; each can be replied to.
+  thread?: Entry[]
 }
+
+// What a compose panel is for: a note of your own, or a reply to a comment on
+// the page (posted through the site's own reply box, never by us).
+type ReplyTarget = { commentId: string; author: string; re?: string }
 
 const HL = typeof (globalThis as any).Highlight !== 'undefined' && !!(window as any).CSS?.highlights
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -64,6 +72,12 @@ export class Marginer {
   // its note and a click opens the pane at its reply.
   private mode: Mode = 'beside'
   private peekEl!: HTMLElement       // the hover preview, when collapsed
+  // Other readers' annotations, read from the page's own comments.
+  private site: Site | null = null
+  private threads: Thread[] = []
+  private view: 'mine' | string = 'mine'  // 'mine' or a thread's root comment id
+  private mine: { md: string; blocks: Block[]; preamble: string; spans: { start: number; reply: number; end: number }[] } | null = null
+  private composeReply: ReplyTarget | null = null
   private reserved = ''             // the html margin we're currently claiming
 
   private styleEl!: HTMLStyleElement
@@ -130,6 +144,8 @@ export class Marginer {
     const stored = await loadDoc()
     this.setMarkdown(stored?.md ?? '')
     this.setOpen(!opts?.collapsed)
+    this.site = detectSite()
+    if (this.site) void this.loadThreads()
 
     this.on(document, 'mouseup', (e: MouseEvent) => this.onMouseUp(e))
     this.on(document, 'touchend', (e: TouchEvent) => this.onMouseUp(e as any), { passive: true })
@@ -205,7 +221,9 @@ export class Marginer {
     this.renderAll()
   }
 
-  private resolve(b: RBlock, i: number): Block {
+  // `root` is where the quotes are looked for: the whole page for your own
+  // notes (you may annotate anything), the article alone for a comment's.
+  private resolve(b: RBlock, i: number, root: Element = document.body): Block {
     const { emojis, text } = splitLeadingEmojis(b.note)
     const ranges: Range[] = []
     const imgs: HTMLImageElement[] = []
@@ -213,17 +231,18 @@ export class Marginer {
     b.quotes.forEach((q, k) => {
       const nth = b.nths[k] ?? 1
       if (imageSrcOf(q)) {
-        const img = resolveImageQuote(q, nth, document.body)
+        const img = resolveImageQuote(q, nth, root)
         if (img) { addImg(img); const r = document.createRange(); r.selectNode(img); ranges.push(r) }
       } else {
-        const r = resolveNthQuote(q, nth, document.body)
-        if (r) { ranges.push(r); imagesInRange(r, document.body).forEach(addImg) }
+        const r = resolveNthQuote(q, nth, root)
+        if (r) { ranges.push(r); imagesInRange(r, root).forEach(addImg) }
       }
     })
     return { id: `b${i}`, quotes: b.quotes, nths: b.nths, note: b.note, emojis, text, ranges, imgs }
   }
 
   private reanchor() {
+    if (this.view !== 'mine') { this.setView(this.view); return } // re-resolve the thread's quotes
     const focused = this.focused
     this.setMarkdown(this.md)
     if (focused && this.blockById(focused)) this.focused = focused
@@ -241,6 +260,7 @@ export class Marginer {
   // Persist and re-derive everything (drops focus; use saveQuiet while editing).
   private async save() {
     clearTimeout(this.quietTimer) // a stale autosave must not clobber a newer document
+    if (this.view !== 'mine') return // someone else's notes are never ours to store
     this.md = this.serialize()
     this.focused = null
     void saveDoc(this.md)
@@ -250,6 +270,7 @@ export class Marginer {
   // Debounced save that does NOT re-parse, so an open editor keeps its cursor.
   private saveQuiet() {
     clearTimeout(this.quietTimer)
+    if (this.view !== 'mine') return
     this.quietTimer = setTimeout(async () => {
       this.md = this.serialize()
       await saveDoc(this.md)
@@ -397,6 +418,7 @@ export class Marginer {
     bar.innerHTML = `
       <div class="mg-head">
         <div class="mg-brand">✍️ Marginer <span class="mg-count" data-count></span></div>
+        <select class="mg-select" data-view title="Whose notes to show" hidden></select>
         <button class="mg-tbtn" data-act="mode" title="Show notes beside the text">${ICON.beside}</button>
         <button class="mg-tbtn" data-act="hl" title="Show/hide highlights">${ICON.eye}</button>
         <button class="mg-tbtn" data-act="collapse" title="Collapse">${ICON.close}</button>
@@ -493,6 +515,7 @@ export class Marginer {
   }
 
   private onPaneInput() {
+    if (this.view !== 'mine') return
     this.pendingQuote = null
     this.md = this.paneEl.value
     this.renderPaneBack()
@@ -503,7 +526,7 @@ export class Marginer {
   // Anything that rebuilds the document from `blocks` must see what was just
   // typed, debounce or no debounce.
   private flushPane() {
-    if (this.paneTimer == null) return
+    if (this.paneTimer == null || this.view !== 'mine') return
     clearTimeout(this.paneTimer)
     this.paneTimer = null
     this.reparsePane()
@@ -511,6 +534,7 @@ export class Marginer {
 
   private reparsePane() {
     this.paneTimer = null
+    if (this.view !== 'mine') return
     this.md = this.paneEl.value
     const { preamble, blocks, spans } = parseSpans(this.md)
     this.preamble = preamble
@@ -620,6 +644,7 @@ export class Marginer {
     bar.setAttribute('data-mg-ui', '')
     bar.innerHTML = `
       <div class="mg-brand">✍️ <span class="mg-count" data-count></span></div>
+      <select class="mg-select" data-view title="Whose notes to show" hidden></select>
       <button class="mg-tbtn" data-act="mode" title="Show notes in a list">${ICON.list}</button>
       <button class="mg-tbtn" data-act="hl" title="Show/hide notes and highlights">${ICON.eye}</button>
       <button class="mg-tbtn" data-act="copy" title="Copy markdown">${ICON.copy}</button>
@@ -631,6 +656,130 @@ export class Marginer {
     act('hl', () => this.toggleHighlights())
     act('copy', () => this.copyMarkdown())
     act('collapse', () => this.setOpen(false))
+    for (const sel of document.querySelectorAll<HTMLSelectElement>('[data-mg-ui] [data-view], .mg-bar [data-view]')) {
+      sel.addEventListener('change', () => this.setView(sel.value))
+    }
+  }
+
+  // ---- other readers' notes ---------------------------------------------------
+
+  private async loadThreads() {
+    if (!this.site) return
+    try {
+      const comments = await this.site.fetchComments()
+      const article = this.site.article()
+      this.threads = buildThreads(comments, (b) => this.resolve(b, 0, article).ranges.length > 0)
+    } catch {
+      this.threads = [] // the site's API said no; your own notes still work
+    }
+    this.renderPicker()
+  }
+
+  private renderPicker() {
+    const opts = [`<option value="mine">Your notes</option>`].concat(
+      this.threads.map((t) => `<option value="${esc(t.rootId)}">${esc(t.author)} · ${t.entries.length}</option>`))
+    for (const sel of document.querySelectorAll<HTMLSelectElement>('.mg-sidebar [data-view], .mg-bar [data-view]')) {
+      sel.innerHTML = opts.join('')
+      sel.value = this.view
+      sel.hidden = !this.threads.length
+    }
+  }
+
+  // Show one reader's thread (a top-level comment and its replies) on the page,
+  // or your own notes again. Your document is parked untouched while a thread
+  // is up: nothing in that state is saved.
+  setView(view: string) {
+    const thread = view === 'mine' ? null : this.threads.find((t) => t.rootId === view)
+    if (view !== 'mine' && !thread) return
+    this.closeCompose(false)
+    this.flushPane()
+    if (this.cardEditor && this.focused) { const b = this.blockById(this.focused); if (b && this.view === 'mine') this.commitCard(b, this.cardEditor) }
+    if (this.view === 'mine' && view !== 'mine') this.mine = { md: this.md, blocks: this.blocks, preamble: this.preamble, spans: this.spans }
+    this.view = view
+    this.focused = null
+    this.cardEditor = undefined
+    this.paneEl.readOnly = view !== 'mine'
+    this.sidebar.classList.toggle('mg-foreign', view !== 'mine')
+    if (!thread) {
+      const mine = this.mine
+      this.mine = null
+      if (mine) { this.md = mine.md; this.setMarkdown(this.md) } else this.renderAll()
+    } else {
+      // One block per quoted passage, carrying every entry that quotes it.
+      const article = this.site?.article() ?? document.body
+      this.blocks = groupByAnchor(thread.entries).map((group, i) => {
+        const b = this.resolve(group[0].block, i, article)
+        b.id = `t${i}`
+        b.thread = group
+        return b
+      })
+      this.md = thread.entries.map((e) => e.block.note).join('\n')
+      this.spans = []
+      this.paneEl.value = this.threadText(thread)
+      this.gutterCache = null
+      this.renderAll()
+    }
+    this.renderPicker()
+  }
+
+  // The thread as text, for the (read-only) pane: each comment under its author.
+  private threadText(t: Thread): string {
+    const seen = new Set<string>()
+    const parts: string[] = []
+    for (const e of t.entries) {
+      if (seen.has(e.commentId)) continue
+      seen.add(e.commentId)
+      parts.push(`${'  '.repeat(e.depth)}— ${e.author}`)
+    }
+    return `${t.author}'s thread: ${t.entries.length} note${t.entries.length === 1 ? '' : 's'} on this page.\n` +
+      `Shown beside the text; use Reply on a note to answer it in the comments.\n\n` + parts.join('\n')
+  }
+
+  // A reply to `entry` (or, with no entry, to the thread's root comment, quoting
+  // a fresh selection): the compose panel in reply mode, positioned at the
+  // passage in question.
+  private openReply(blk: Block, entry: Entry | null) {
+    const thread = this.threads.find((t) => t.rootId === this.view)
+    if (!thread || !blk.ranges.length) return
+    const target: ReplyTarget = entry
+      ? { commentId: entry.commentId, author: entry.author, re: entry.block.note }
+      : { commentId: thread.rootId, author: thread.author }
+    this.openCompose(blk.ranges[0].cloneRange(), target)
+  }
+
+  // Send the reply through the site's own reply box: pre-filled when the comment
+  // is on the page, otherwise via its permalink with the text on the clipboard.
+  // You press Post; Marginer never posts for you.
+  private async sendReply(target: ReplyTarget, md: string) {
+    const site = this.site
+    if (!site) return
+    const text = withFooter(md)
+    try { await navigator.clipboard.writeText(text) } catch { /* no clipboard: the prefill may still work */ }
+    const anchor = site.anchorFor(target.commentId)
+    if (anchor && await this.prefillReply(anchor, text)) {
+      this.toast(`Reply to ${target.author} drafted below — press Post`)
+      return
+    }
+    try { localStorage.setItem('marginer:pending-reply', JSON.stringify({ url: site.permalink(target.commentId), text })) } catch { /* fine */ }
+    this.toast('Reply copied — opening the comment…')
+    setTimeout(() => { location.href = site.permalink(target.commentId) }, 600)
+  }
+
+  private async prefillReply(anchor: HTMLElement, text: string): Promise<boolean> {
+    const box = (anchor.closest('.comment') as HTMLElement | null) ?? anchor
+    const btn = Array.from(box.querySelectorAll('button')).find((b) => /^\s*reply\s*$/i.test(b.textContent ?? ''))
+    if (!btn) return false
+    btn.click()
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 100))
+      const ta = box.querySelector('textarea') as HTMLTextAreaElement | null
+      if (ta) {
+        fillTextarea(ta, text)
+        ta.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        return true
+      }
+    }
+    return false
   }
 
   // Below the narrow breakpoint there is no gutter to put cards in, so view
@@ -676,7 +825,7 @@ export class Marginer {
     const list = this.ordered()
     this.renderCounts()
     // The pane is the source of truth while it has focus; otherwise it follows.
-    if (document.activeElement !== this.paneEl && this.paneEl.value !== this.md) this.paneEl.value = this.md
+    if (this.view === 'mine' && document.activeElement !== this.paneEl && this.paneEl.value !== this.md) this.paneEl.value = this.md
     this.renderPaneBack()
     refreshEmojiPanel(this.paneEmoji)
 
@@ -687,7 +836,7 @@ export class Marginer {
     if (this.layout() !== 'beside') return
     // A reaction with no comment is already on the page as a margin chip; its
     // card only shows while it's being edited (click the highlight).
-    const shown = list.filter((b) => hasCommentText(b.text) || b.id === this.focused)
+    const shown = list.filter((b) => b.thread || hasCommentText(b.text) || b.id === this.focused)
     if (!shown.length) { this.reserve(''); return } // nothing to make room for
     for (const blk of shown) this.besideEl.appendChild(this.buildCard(blk))
     this.layoutBeside()
@@ -801,6 +950,28 @@ export class Marginer {
         : `<div class="mg-quote">${esc(q)}</div>`
     }).join('')
 
+    if (blk.thread) {
+      // Someone else's: every entry quoting this passage, in thread order, each
+      // with a Reply. Read-only on the page.
+      card.classList.add('mg-foreign')
+      card.innerHTML = quoteHtml + `<div class="mg-thread">` + blk.thread.map((e, i) => {
+        const { emojis, text } = splitLeadingEmojis(e.block.note)
+        return `<div class="mg-entry" style="margin-left:${Math.min(e.depth, 4) * 12}px" data-entry="${i}">
+          <div class="mg-who"><b>${esc(e.author)}</b> <a href="${esc(e.permalink)}" title="This comment on the page">↗</a></div>
+          ${text.trim() ? `<div class="mg-md">${renderMarkdown(text)}</div>` : ''}
+          ${emojis.length ? `<div class="mg-entry-emoji">${emojis.map((x) => esc(x)).join(' ')}</div>` : ''}
+          <button class="mg-btn tiny ghost" data-reply="${i}">Reply</button>
+        </div>`
+      }).join('') + `</div>`
+      card.querySelectorAll<HTMLElement>('[data-reply]').forEach((b) => b.addEventListener('click', (ev) => {
+        ev.stopPropagation()
+        this.openReply(blk, blk.thread![Number(b.dataset.reply)])
+      }))
+      card.addEventListener('click', () => this.focus(blk.id, true))
+      card.addEventListener('mouseenter', () => this.setHovered(blk.id))
+      card.addEventListener('mouseleave', () => this.setHovered(null))
+      return card
+    }
     if (!focused) {
       const noteHtml = hasCommentText(blk.text)
         ? `<div class="mg-md">${renderMarkdown(blk.text)}</div>`
@@ -913,7 +1084,7 @@ export class Marginer {
     if (this.open || !this.highlightsOn) return
     const blk = this.blockById(this.hovered)
     const line = blk && this.firstLine(blk)
-    if (!blk || !line || !hasCommentText(blk.text)) return // a bare reaction: the chip says it all
+    if (!blk || !line || (!blk.thread && !hasCommentText(blk.text))) return // a bare reaction: the chip says it all
     const card = this.buildCard(blk)
     card.querySelector('.mg-cardx')?.remove() // read-only glance; edit in the pane
     this.peekEl.appendChild(card)
@@ -953,6 +1124,11 @@ export class Marginer {
     // A selection with no text is still worth taking if it holds an image --
     // that's how a figure gets annotated.
     if (!sel.toString().trim() && !imagesInRange(range, document.body).length) return
+    if (this.view !== 'mine') {
+      const t = this.threads.find((x) => x.rootId === this.view)
+      if (t) this.openCompose(range.cloneRange(), { commentId: t.rootId, author: t.author })
+      return
+    }
     if (this.paneOpen()) this.appendQuote(range.cloneRange())
     else this.openCompose(range.cloneRange())
   }
@@ -981,11 +1157,12 @@ export class Marginer {
   // clicking a reaction grafts the note into the document immediately, so the
   // margin chip and the sidebar card appear under your cursor rather than after a
   // round-trip through Save.
-  private openCompose(range: Range) {
+  private openCompose(range: Range, reply: ReplyTarget | null = null) {
     const pieces = quotePiecesFromRange(range, document.body)
     if (!pieces?.quotes.length) return
     if (this.compose) this.closeCompose(false) // keep whatever was typed into the last one
-    this.focused = null
+    this.composeReply = reply
+    if (!reply) this.focused = null
 
     const wb: Block = {
       id: `b${this.blocks.length}`,
@@ -1003,13 +1180,15 @@ export class Marginer {
     box.setAttribute('data-mg-ui', '')
     const first = wb.quotes[0]
     const src = imageSrcOf(first)
+    if (reply) box.classList.add('mg-reply')
     box.innerHTML =
       (src ? `<div class="mg-quote mg-quote-img"><img src="${esc(src)}" alt=""></div>`
            : `<div class="mg-quote">${esc(first)}</div>`) +
-      `<textarea data-note rows="2" placeholder="Add a note… (⌘↵ to save)"></textarea>
+      (reply?.re ? `<div class="mg-re"><b>${esc(reply.author)}:</b> ${esc(reply.re)}</div>` : '') +
+      `<textarea data-note rows="2" placeholder="${reply ? `Reply to ${esc(reply.author)}… (⌘↵ to send)` : 'Add a note… (⌘↵ to save)'}"></textarea>
        <div class="mg-composebar">
          <div data-emojislot></div>
-         <button class="mg-btn" data-act="save">Save</button>
+         <button class="mg-btn" data-act="save">${reply ? 'Reply on the page' : 'Save'}</button>
        </div>`
 
     const ta = box.querySelector('[data-note]') as HTMLTextAreaElement
@@ -1023,7 +1202,7 @@ export class Marginer {
       grow()
       wb.note = ta.value
       refreshEmojiPanel(panel)
-      this.reflectCompose() // the note — reaction and all — lands on the page now
+      if (!reply) this.reflectCompose() // the note — reaction and all — lands on the page now
     }
     ta.addEventListener('input', onEdit)
     ta.addEventListener('keydown', (e) => {
@@ -1101,6 +1280,17 @@ export class Marginer {
     this.syncDerived(wb)
     this.compose?.remove(); this.compose = undefined
     this.composeBlock = undefined; this.composeGrafted = false
+    const reply = this.composeReply
+    this.composeReply = null
+    if (reply) {
+      // A reply is sent, not stored: only an explicit send with something in it
+      // goes anywhere; click-away simply drops the draft.
+      this.renderAll()
+      if (!explicit || !wb.note.trim()) return
+      const rb: RBlock = { quotes: wb.quotes, nths: wb.nths, note: wb.note, re: reply.re }
+      void this.sendReply(reply, serializeBody([rb]))
+      return
+    }
 
     // The panel opens on every selection, so an empty one you merely clicked away
     // from must leave NO trace -- otherwise copying a line litters the page with
@@ -1122,6 +1312,7 @@ export class Marginer {
     const grafted = this.composeGrafted
     this.compose?.remove(); this.compose = undefined
     this.composeBlock = undefined; this.composeGrafted = false
+    this.composeReply = null
     if (!wb) { this.renderHighlights(); return }
     clearTimeout(this.quietTimer)
     if (grafted) { this.blocks = this.blocks.filter((b) => b !== wb); void this.save() }
@@ -1239,7 +1430,7 @@ export class Marginer {
   markdown(): string { return this.serialize() }
 
   private async copyMarkdown() {
-    const md = this.serialize()
+    const md = withFooter(this.serialize())
     try {
       await navigator.clipboard.writeText(md)
       this.toast('Markdown copied')
@@ -1251,7 +1442,7 @@ export class Marginer {
   }
 
   private showMarkdown() {
-    const md = this.serialize()
+    const md = withFooter(this.serialize())
     const wrap = document.createElement('div')
     wrap.className = 'mg-modal'
     wrap.setAttribute('data-mg-ui', '')

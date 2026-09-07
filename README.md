@@ -170,6 +170,45 @@ Notes are keyed by URL (ignoring the `#fragment`) and come back when you revisit
 A note whose text can no longer be found on the page isn't thrown away — its card
 dims to show the anchor is stale, and it still exports.
 
+## Other readers' notes: the comments are the annotations
+
+A reader pastes their export into the post's own comment box — that's the
+whole publishing step, and it's the one they already do. Anyone with Marginer
+on that page then sees those comments **in place**: the tool reads the page's
+comments (on Substack, the same JSON the page itself loads — same-origin, so
+cookies and CSP behave), keeps every comment whose `> quote` lines anchor in the
+article, and lists them in a picker on the bar: `Your notes · Maria · 5 · Ann · 1`.
+Pick a thread and its highlights and cards replace yours (yours are parked,
+untouched, and nothing of theirs is ever saved as yours).
+
+There is no server of ours in this: the site keeps the comments, its identity,
+moderation and notifications apply, and a hand-typed `> quote` reply counts just
+the same as a Marginer one. The only footprint is the attribution line the
+export ends with, so other readers learn the in-place view exists.
+
+**Replies nest, email-style.** Reply on an entry and the compose panel opens at
+the passage with the note you're answering above it. What gets sent is a
+comment on *that* comment, with the article quote nested one level deeper than
+the note it answers:
+
+```markdown
+> > the only honest reading anyone ever gives a text
+> Overstated, but I like it.
+
+I don't think it's overstated.
+```
+
+In any run of `>` lines the deepest level is the article quote (what anchors),
+everything shallower is context. A reply can also quote a fresh passage, and a
+selection made while a thread is up starts a reply to it. Substack's comment
+tree supplies the threading: a thread's entries are shown in tree order,
+grouped by the passage they quote, indented by depth.
+
+**Sending goes through the site's own reply box**, never an API: the comment's
+Reply button is pressed and the box pre-filled for you to post; if the comment
+isn't on the page, the text goes on the clipboard and you're taken to its
+permalink, where the userscript (if installed) fills the box on load.
+
 ## Layout
 
 | | |
@@ -186,6 +225,7 @@ codepoints alone are 17 KB, CLDR names take it to 43 KB, and the emojilib
 keywords (what makes "lol" find 🤣) take it to 84 KB. The searchable half is the
 expensive half, and it is the half worth having.
 | `src/app.ts` | the whole UI — the text pane, view mode, compose popover, margin chips, highlight painting |
+| `src/comments.ts` | site adapters (Substack) and thread building: comments → entries that anchor → threads grouped by passage |
 | `src/store.ts` | `chrome.storage.local`, or `localStorage` for the bookmarklet; also the small cross-page prefs (layout mode, emoji usage) |
 | `src/userscript.ts` | userscript shell: stays dormant until a page it already knows about shows up |
 | `extension/` | MV3 shell: a background worker that injects the bundle on click |
@@ -218,4 +258,5 @@ catches the anchoring and permission problems that unit tests miss.
   `tabs` permission and a "read your browsing history" warning at install. The
   userscript gets the same indicator for free, so this is a deliberate hold.
 - Cross-page index: every page you've annotated, in one list.
-- Threaded replies — Penumbra has them, but they need identities to be worth much.
+- Adapters for comment systems other than Substack (a DOM fallback that looks
+  for `>` lines or blockquotes that anchor in the article would cover most blogs).
