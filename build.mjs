@@ -10,10 +10,13 @@ mkdirSync('dist', { recursive: true })
 // to the other. @noframes keeps it out of ad iframes.
 const USERSCRIPT_HEADER = `// ==UserScript==
 // @name         Marginer
-// @namespace    https://github.com/marginer
+// @namespace    https://marginer.app
 // @version      ${version}
 // @description  ${description}
-// @author       you
+// @author       Joshua Hutt
+// @homepageURL  https://marginer.app
+// @updateURL    https://marginer.app/marginer.user.js
+// @downloadURL  https://marginer.app/marginer.user.js
 // @match        *://*/*
 // @run-at       document-idle
 // @noframes
