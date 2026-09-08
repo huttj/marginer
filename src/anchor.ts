@@ -12,9 +12,22 @@ const NON_TEXT = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'TI
 
 type Index = { text: string; nodes: { node: Text; start: number; end: number }[] }
 
+const INLINE = new Set(['inline', 'inline-block', 'inline-flex', 'inline-grid', 'contents', 'ruby', 'inline-table'])
+
+// The flat text is what the reader SEES, so a line break the page renders --
+// a <br>, or the edge of a block -- becomes a newline in it. Two text nodes
+// with nothing between them in the DOM ("arms" then "alongside me" across a
+// <br>) would otherwise fuse into one word. Matching is whitespace-tolerant,
+// so a quote survives either way; what this fixes is the quote TEXT itself.
 function buildIndex(root: Node): Index {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
     acceptNode(n) {
+      if (n.nodeType === Node.ELEMENT_NODE) {
+        const el = n as Element
+        // Elements are visited only to notice breaks; their subtrees are still walked.
+        if (el.closest('[data-mg-ui]') || NON_TEXT.has(el.tagName)) return NodeFilter.FILTER_REJECT
+        return NodeFilter.FILTER_ACCEPT
+      }
       const el = (n as Text).parentElement
       if (!el) return NodeFilter.FILTER_REJECT
       // Skip Marginer's own injected UI, non-rendered text (script/style/template),
@@ -25,11 +38,33 @@ function buildIndex(root: Node): Index {
       return NodeFilter.FILTER_ACCEPT
     },
   })
+  const blockCache = new Map<Element, boolean>()
+  const isBlock = (el: Element) => {
+    let b = blockCache.get(el)
+    if (b === undefined) { b = el.tagName === 'BR' || !INLINE.has(getComputedStyle(el).display); blockCache.set(el, b) }
+    return b
+  }
+  // The nearest block-level ancestor: text in different blocks is on different lines.
+  const blockOf = (t: Text): Element | null => {
+    for (let e = t.parentElement; e && e !== root; e = e.parentElement) if (isBlock(e)) return e
+    return null
+  }
   const nodes: Index['nodes'] = []
   let text = ''
   let n: Node | null
+  let pendingBreak = false
+  let prevBlock: Element | null | undefined
   while ((n = walker.nextNode())) {
+    if (n.nodeType === Node.ELEMENT_NODE) {
+      if (isBlock(n as Element)) pendingBreak = true // a <br>, or a block beginning
+      continue
+    }
     const t = n as Text
+    if (!t.data) continue
+    const block = blockOf(t)
+    if (text.length && (pendingBreak || block !== prevBlock)) text += '\n'
+    pendingBreak = false
+    prevBlock = block
     const start = text.length
     text += t.data
     nodes.push({ node: t, start, end: text.length })

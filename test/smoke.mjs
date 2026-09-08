@@ -537,6 +537,26 @@ while (await notes() > 0) {
 ok('...and a click on the highlight opens each of those to delete', (await page.$$('.mg-card')).length === 0 && await notes() === 0)
 ok('highlights removed', await page.evaluate(() => !CSS.highlights.get('marginer')))
 
+// --- a selection across a <br> keeps the line break as a space ----------------
+await page.goto('data:text/html;charset=utf-8,' + encodeURIComponent('<article><p>Alone I would <b>quadruple my efforts</b><br>I wondered why no one would take up arms<br>alongside me</p><p>A <span>span</span> inline and <em>em</em> text.</p></article>'), { waitUntil: 'load' })
+await page.evaluate(bundle)
+await new Promise((r) => setTimeout(r, 200))
+await page.evaluate(() => {
+  const texts = [...document.querySelector('p').childNodes].filter((n) => n.nodeType === 3)
+  const r = document.createRange(); r.setStart(texts[1], 0); r.setEnd(texts[2], texts[2].length)
+  const s = getSelection(); s.removeAllRanges(); s.addRange(r)
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+})
+await new Promise((r) => setTimeout(r, 200))
+await type('.mg-compose textarea', 'x')
+await click('.mg-compose [data-act="save"]')
+await new Promise((r) => setTimeout(r, 250))
+ok('a quote across a <br> keeps the break as a space', (await page.evaluate(() => window.__marginer.markdown())).startsWith('> I wondered why no one would take up arms alongside me'))
+await page.evaluate(() => { const p = document.querySelectorAll('p')[1]; const r = document.createRange(); r.selectNodeContents(p); const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })) })
+await new Promise((r) => setTimeout(r, 200))
+ok('inline elements add no breaks', await page.$eval('.mg-compose .mg-quote', (e) => e.textContent) === 'A span inline and em text.')
+await page.keyboard.press('Escape')
+
 // --- theme follows the page, not the OS -------------------------------------
 ok('light page -> light panel', await page.evaluate(() => document.documentElement.getAttribute('data-mg-theme')) === 'light')
 await page.goto('file://' + join(root, 'demo/dark.html'), { waitUntil: 'load' })
