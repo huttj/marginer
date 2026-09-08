@@ -182,16 +182,19 @@ article, and lists them in a picker on the bar: `Your notes · Maria · 5 · Ann
 Pick a thread and its highlights and cards replace yours (yours are parked,
 untouched, and nothing of theirs is ever saved as yours).
 
-There is no server of ours in this: the site keeps the comments, its identity,
+Both of Substack's page styles work — a publication's `/p/slug` page and the
+reader's `substack.com/home/post/p-<id>`, whose canonical link names the
+publication. There is no server of ours in this: the site keeps the comments, its identity,
 moderation and notifications apply, and a hand-typed `> quote` reply counts just
 the same as a Marginer one. The only footprint is the attribution line the
 export ends with, so other readers learn the in-place view exists.
 
-**Replies accumulate, and nest email-style.** Reply on an entry and the pane
-becomes your draft reply to *that* comment, with the passage quoted under the
-note you're answering; reply on another of their notes and it's appended to
-the same draft. Type beneath each. What gets sent is one comment on their
-comment:
+**Replies are written on the cards, and nest email-style.** Reply on a note and
+an editable reply appears right under it, highlighted as unsent until you send.
+Reply on as many notes as you like; **Send replies · 3/5** (replies written
+over notes that could be replied to — reactions count on neither side) posts
+them all: one comment per person replied to, each comment carrying every
+reply to that person, the passage nested under the words being answered:
 
 ```markdown
 > > the only honest reading anyone ever gives a text
@@ -202,10 +205,11 @@ I don't think it's overstated.
 
 In any run of `>` lines the deepest level is the article quote (what anchors),
 everything shallower is context. A selection made while a thread is up quotes
-a fresh passage into the reply to the thread's author. Replying to two people
-gives two drafts (a switcher appears); drafts persist per page. Substack's
-comment tree supplies the threading: a thread's entries are shown in tree
-order, grouped by the passage they quote, indented by depth.
+a fresh passage into a reply to the thread's author, on a card of its own.
+Unsent replies persist per page. The pane, meanwhile, previews the replies as
+they will be posted. Substack's comment tree supplies the threading: a
+thread's entries are shown in tree order, grouped by the passage they quote,
+indented by depth.
 
 **Send goes through the site's own reply box**, never an API: the comment's own
 Reply link is pressed (not a child comment's) and its box pre-filled for you

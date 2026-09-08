@@ -34,36 +34,62 @@ export type Site = {
 // ---- Substack ----------------------------------------------------------------
 
 const SUBSTACK_POST = /^\/p\/([^/?#]+)/
+const SUBSTACK_READER = /^\/home\/post\/p-(\d+)/
 
+// A post is served two ways: on its publication (`pub.substack.com/p/slug`, or
+// a custom domain) and in Substack's reader (`substack.com/home/post/p-<id>`).
+// The reader page's canonical link names the publication, whose API it calls
+// itself, cross-origin -- so the same endpoints work from either page.
 export function detectSite(): Site | null {
-  const m = SUBSTACK_POST.exec(location.pathname)
   const isSubstack = !!document.querySelector('script[src*="substackcdn.com"], link[href*="substackcdn.com"], meta[content*="substack" i]')
-  if (!m || !isSubstack) return null
-  const slug = m[1]
-  const base = location.origin
-  const post = `${base}/p/${slug}`
+  if (!isSubstack) return null
+  const canonical = (document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null)?.href ?? ''
+  let base = location.origin
+  let slug: string | null = null
+  let postId: number | null = null
+  const onPub = SUBSTACK_POST.exec(location.pathname)
+  const inReader = SUBSTACK_READER.exec(location.pathname)
+  if (onPub) slug = onPub[1]
+  else if (inReader) {
+    postId = Number(inReader[1])
+    try {
+      const c = new URL(canonical)
+      const cm = SUBSTACK_POST.exec(c.pathname)
+      if (cm) { base = c.origin; slug = cm[1] }
+    } catch { /* no canonical: the by-id lookup below fills these in */ }
+  } else return null
+  const post = () => `${base}/p/${slug}`
   return {
     name: 'substack',
     article: () => document.querySelector('.available-content, .body.markup, article') ?? document.body,
     async fetchComments() {
-      // The page's own JSON. The post id comes from the slug; comments come as a
-      // tree, flattened here with parent pointers. Deleted bodies are dropped.
-      const p = await (await fetch(`${base}/api/v1/posts/${encodeURIComponent(slug)}`, { credentials: 'include' })).json()
-      const id = p?.id
+      // The page's own JSON: the post id from the slug (or the slug from the id,
+      // in the reader), then the comments as a tree, flattened here with parent
+      // pointers. Deleted bodies are dropped.
+      if (postId && !slug) {
+        const p = await (await fetch(`https://substack.com/api/v1/posts/by-id/${postId}`, { credentials: 'include' })).json()
+        const canon = p?.post?.canonical_url ?? p?.canonical_url
+        try { const c = new URL(canon); base = c.origin; slug = SUBSTACK_POST.exec(c.pathname)?.[1] ?? null } catch { /* stay */ }
+      }
+      if (!postId && slug) {
+        const p = await (await fetch(`${base}/api/v1/posts/${encodeURIComponent(slug)}`, { credentials: 'include' })).json()
+        postId = p?.id ?? null
+      }
+      const id = postId
       if (!id) return []
       const r = await (await fetch(`${base}/api/v1/post/${id}/comments?all_comments=true&sort=oldest_first`, { credentials: 'include' })).json()
       const out: Comment[] = []
       const walk = (c: any, parentId: string | null) => {
         if (!c || c.deleted) return
         const cid = String(c.id)
-        if (c.body) out.push({ id: cid, author: c.name || 'Anonymous', body: String(c.body), parentId, date: c.date || '', permalink: `${post}/comment/${cid}` })
+        if (c.body) out.push({ id: cid, author: c.name || 'Anonymous', body: String(c.body), parentId, date: c.date || '', permalink: `${post()}/comment/${cid}` })
         for (const ch of c.children ?? []) walk(ch, cid)
       }
       for (const c of r?.comments ?? []) walk(c, null)
       return out
     },
     openReplyBox: (id) => openSubstackReplyBox(id),
-    permalink: (id) => `${post}/comment/${id}`,
+    permalink: (id) => `${post()}/comment/${id}`,
   }
 }
 

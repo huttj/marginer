@@ -189,6 +189,23 @@ export const CSS = `
 .mg-sidebar.mg-foreign .mg-panebar, .mg-sidebar.mg-foreign .mg-hint { display: none; }
 .mg-foot .mg-select { flex: 0 1 auto; }
 .mg-bar .mg-btn.tiny { margin: 0 2px; }
+/* an unsent reply, on the card: highlighted until Send */
+.mg-entry.mg-draft {
+  border-left: 2px dashed var(--mg-accent); background: rgba(185,119,10,.08);
+  border-radius: 0 8px 8px 0; padding: 6px 8px 8px; margin-top: 6px;
+}
+.mg-entry.mg-draft .mg-who { display: flex; align-items: center; gap: 4px; }
+.mg-draftx {
+  margin-left: auto; background: none; border: none; padding: 2px; border-radius: 5px;
+  color: var(--mg-muted); cursor: pointer; display: inline-flex; opacity: .7;
+}
+.mg-draftx:hover { color: var(--mg-danger); opacity: 1; }
+.mg-entry.mg-draft textarea {
+  width: 100%; resize: none; overflow: hidden; min-height: 30px; line-height: 1.5;
+  font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  background: var(--mg-bg); color: var(--mg-fg); border: 1px solid var(--mg-border); border-radius: 7px; padding: 5px 7px;
+}
+.mg-entry.mg-draft textarea:focus { outline: none; border-color: var(--mg-accent); }
 /* the reply panel: the note being answered, above the box */
 .mg-re {
   font-size: 12.5px; color: var(--mg-muted); margin: 0 0 8px; padding: 4px 8px 4px 10px;

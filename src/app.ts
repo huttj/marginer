@@ -54,6 +54,20 @@ const NARROW = 720 // below this the sidebar docks to the bottom and there is no
 
 type Mode = 'list' | 'beside'
 
+// A reply in progress: which comment it goes to, the passage, the words it
+// answers (`re`), and the reply. `entryKey` names the thread entry it sits
+// under on the card; a reply that quotes a fresh passage has none.
+type Draft = {
+  id: string
+  target: string      // comment id the reply is posted to
+  author: string      // whose comment that is
+  entryKey?: string   // `${commentId}:${index}` of the entry answered
+  quotes: string[]
+  nths: number[]
+  re?: string
+  note: string
+}
+
 export class Marginer {
   private md = ''
   private blocks: Block[] = []
@@ -73,10 +87,9 @@ export class Marginer {
   private threads: Thread[] = []
   private view: 'mine' | string = 'mine'  // 'mine' or a thread's root comment id
   private mine: { md: string; blocks: Block[]; preamble: string; spans: { start: number; reply: number; end: number }[] } | null = null
-  // Replies being written, one draft per comment replied to, persisted per page.
-  // The pane edits the draft for `draftTarget` while a thread is up.
-  private drafts: Record<string, { author: string; md: string }> = {}
-  private draftTarget: string | null = null
+  // Replies being written: each is a block addressed to one comment, edited in
+  // place on its card and highlighted until sent. Persisted per page.
+  private drafts: Draft[] = []
   private reserved = ''             // the html margin we're currently claiming
 
   private styleEl!: HTMLStyleElement
@@ -158,9 +171,16 @@ export class Marginer {
 
     // Pages that lazy-load or hydrate can replace the nodes our Ranges point at.
     // Re-anchor from the markdown (the source of truth) when the DOM settles.
+    // A record is ours if it happened inside our UI, or is our UI coming and
+    // going (a toast on <body> has body as its target, not the toast).
+    const ours = (r: MutationRecord) => {
+      if ((r.target as Element).closest?.('[data-mg-ui]')) return true
+      const nodes = [...Array.from(r.addedNodes), ...Array.from(r.removedNodes)]
+      return nodes.length > 0 && nodes.every((n) => (n as Element).hasAttribute?.('data-mg-ui'))
+    }
     this.mo = new MutationObserver((recs) => {
       if (!this.blocks.length) return
-      if (recs.every((r) => (r.target as Element).closest?.('[data-mg-ui]'))) return
+      if (recs.every(ours)) return
       clearTimeout(this.mutTimer)
       this.mutTimer = setTimeout(() => { if (!this.compose && !this.cardEditor) this.reanchor() }, 800)
     })
@@ -439,7 +459,6 @@ export class Marginer {
       <div class="mg-hint">Emoji at the front of a reply are its reactions. <b>⌥-click</b> an image to quote it.</div>
       <div class="mg-panebar" data-emojislot></div>
       <div class="mg-foot">
-        <select class="mg-select" data-draft title="Which reply" hidden></select>
         <button class="mg-btn" data-act="copy">Copy markdown</button>
         <button class="mg-btn" data-act="send" hidden>Send reply</button>
       </div>`
@@ -525,11 +544,7 @@ export class Marginer {
   }
 
   private onPaneInput() {
-    if (this.view !== 'mine') {
-      const d = this.draft()
-      if (d) { d.md = this.paneEl.value; this.saveDrafts(); this.renderPaneBack(); this.renderDraft() }
-      return
-    }
+    if (this.view !== 'mine') return // the pane is a preview while a thread is up
     this.pendingQuote = null
     this.md = this.paneEl.value
     this.renderPaneBack()
@@ -662,8 +677,7 @@ export class Marginer {
       <button class="mg-tbtn" data-act="mode" title="Show notes in a list">${ICON.list}</button>
       <button class="mg-tbtn" data-act="hl" title="Show/hide notes and highlights">${ICON.eye}</button>
       <button class="mg-tbtn" data-act="copy" title="Copy markdown">${ICON.copy}</button>
-      <select class="mg-select" data-draft title="Which reply" hidden></select>
-      <button class="mg-btn tiny" data-act="send" hidden>Send reply</button>
+      <button class="mg-btn tiny" data-act="send" hidden>Send replies</button>
       <button class="mg-tbtn" data-act="collapse" title="Collapse">${ICON.close}</button>`
     document.body.appendChild(bar)
     this.bar = bar
@@ -676,9 +690,7 @@ export class Marginer {
       sel.addEventListener('change', () => this.setView(sel.value))
     }
     for (const root of [this.sidebar, this.bar]) {
-      root.querySelector('[data-act="send"]')!.addEventListener('click', () => void this.sendDraft())
-      const sel = root.querySelector('[data-draft]') as HTMLSelectElement
-      sel.addEventListener('change', () => { this.flushDraft(); this.draftTarget = sel.value; this.renderDraft() })
+      root.querySelector('[data-act="send"]')!.addEventListener('click', () => void this.sendDrafts())
     }
   }
 
@@ -721,140 +733,234 @@ export class Marginer {
     this.cardEditor = undefined
     this.sidebar.classList.toggle('mg-foreign', view !== 'mine')
     if (!thread) {
-      this.draftTarget = null
       const mine = this.mine
       this.mine = null
       if (mine) { this.md = mine.md; this.setMarkdown(this.md) } else this.renderAll()
     } else {
-      // One block per quoted passage, carrying every entry that quotes it.
-      const article = this.site?.article() ?? document.body
-      this.blocks = groupByAnchor(thread.entries).map((group, i) => {
-        const b = this.resolve(group[0].block, i, article)
-        b.id = `t${i}`
-        b.thread = group
-        return b
-      })
+      this.rebuildThread(thread)
       this.md = ''
       this.spans = []
       this.gutterCache = null
-      // The pane becomes the reply draft: to whoever was last replied to in
-      // this thread, else the thread's author.
-      const inThread = new Set(thread.entries.map((e) => e.commentId))
-      const last = Object.keys(this.drafts).filter((id) => inThread.has(id)).pop()
-      this.draftTarget = last ?? thread.rootId
-      if (!this.drafts[this.draftTarget]) this.drafts[this.draftTarget] = { author: thread.author, md: '' }
       this.renderAll()
     }
     this.renderPicker()
     this.renderDraft()
   }
 
+  // One block per quoted passage: every entry quoting it, plus any reply draft
+  // that quotes a passage nobody has yet (it gets a card of its own).
+  private rebuildThread(thread: Thread) {
+    const article = this.site?.article() ?? document.body
+    const key = (quotes: string[], nths: number[]) => `${nths[0] ?? 1}:${quotes.join(' | ')}`
+    const groups = groupByAnchor(thread.entries)
+    const seen = new Set(groups.map((g) => key(g[0].block.quotes, g[0].block.nths)))
+    this.blocks = groups.map((group, i) => {
+      const b = this.resolve(group[0].block, i, article)
+      b.id = `t${i}`
+      b.thread = group
+      return b
+    })
+    for (const d of this.threadDrafts(thread)) {
+      const k = key(d.quotes, d.nths)
+      if (seen.has(k)) continue
+      seen.add(k)
+      const b = this.resolve({ quotes: d.quotes, nths: d.nths, note: '' }, this.blocks.length, article)
+      b.id = `t${this.blocks.length}`
+      b.thread = []
+      this.blocks.push(b)
+    }
+  }
+
+  private threadDrafts(thread: Thread): Draft[] {
+    const ids = new Set(thread.entries.map((e) => e.commentId))
+    ids.add(thread.rootId)
+    return this.drafts.filter((d) => ids.has(d.target))
+  }
+  private currentThread(): Thread | undefined { return this.threads.find((t) => t.rootId === this.view) }
+
   // ---- reply drafts ------------------------------------------------------------
-  // Replies accumulate: each Reply on a card appends a nested-quote block to the
-  // draft for THAT comment, and one Send posts the whole draft through the
-  // site's reply box. Drafts survive reloads (and the trip to a permalink).
+  // A reply is written on the card, under the note it answers, and stays there
+  // -- highlighted as unsent -- until Send posts every draft in the thread
+  // through the site's reply boxes, one comment per person replied to.
 
   private draftsKey = () => `marginer:drafts:${pageKey()}`
   private loadDrafts() {
-    try { this.drafts = JSON.parse(localStorage.getItem(this.draftsKey()) ?? '{}') } catch { this.drafts = {} }
+    try {
+      const raw = JSON.parse(localStorage.getItem(this.draftsKey()) ?? '[]')
+      this.drafts = Array.isArray(raw) ? raw : []
+    } catch { this.drafts = [] }
   }
   private saveDrafts() {
-    const live = Object.fromEntries(Object.entries(this.drafts).filter(([, d]) => d.md.trim()))
     try {
-      if (Object.keys(live).length) localStorage.setItem(this.draftsKey(), JSON.stringify(live))
+      if (this.drafts.length) localStorage.setItem(this.draftsKey(), JSON.stringify(this.drafts))
       else localStorage.removeItem(this.draftsKey())
     } catch { /* blocked storage: the session still has it */ }
   }
 
-  private draft() { return this.draftTarget ? this.drafts[this.draftTarget] : undefined }
+  // A reply that says something. A bare reaction is sent along but isn't
+  // counted as a reply.
+  private isReply = (d: Draft) => hasCommentText(splitLeadingEmojis(d.note).text)
 
-  // Reply to `entry` (or, with no entry, to the thread's root with a fresh
-  // quote): append the block to that comment's draft and put the caret under it.
-  private addToDraft(target: { commentId: string; author: string }, quotes: string[], nths: number[], re?: string) {
-    this.draftTarget = target.commentId
-    const d = (this.drafts[target.commentId] ??= { author: target.author, md: '' })
-    let q = formatQuoteMarker(nths[0] ?? 1, quotes.join(' '))
-    if (re?.trim()) q = `> ${q}\n` + re.trim().split('\n').map((l) => (l.trim() ? `> ${l}` : '>')).join('\n')
-    const body = d.md.replace(/\s+$/, '')
-    d.md = (body ? `${body}\n\n\n` : '') + q + '\n\n'
+  // Reply on an entry: a draft under it (or the one already there), focused.
+  private openReply(blk: Block, entry: Entry | null) {
+    const thread = this.currentThread()
+    if (!thread) return
+    const entryKey = entry ? this.entryKey(thread, entry) : undefined
+    let d = entryKey ? this.drafts.find((x) => x.entryKey === entryKey) : undefined
+    if (!d) {
+      d = {
+        id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        target: entry ? entry.commentId : thread.rootId,
+        author: entry ? entry.author : thread.author,
+        entryKey,
+        quotes: blk.quotes, nths: blk.nths,
+        // Quote their words, not their reaction: the note minus its leading emoji.
+        re: entry ? splitLeadingEmojis(entry.block.note).text : undefined,
+        note: '',
+      }
+      this.drafts.push(d)
+      this.saveDrafts()
+    }
+    this.focused = blk.id
+    this.renderAll()
+    this.focusDraft(d.id)
+  }
+
+  // A selection while a thread is up: quote it into a reply to the thread's
+  // author, on a card of its own at that passage.
+  private quoteIntoReply(quotes: string[], nths: number[]) {
+    const thread = this.currentThread()
+    if (!thread) return
+    const d: Draft = {
+      id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+      target: thread.rootId, author: thread.author, quotes, nths, note: '',
+    }
+    this.drafts.push(d)
     this.saveDrafts()
-    if (!this.open || this.layout() !== 'list') { this.mode = 'list'; this.setOpen(true) }
-    this.renderDraft()
-    const ta = this.paneEl
+    this.rebuildThread(thread)
+    this.gutterCache = null
+    this.focused = this.blocks.find((b) => b.thread && b.quotes.join('') === quotes.join(''))?.id ?? null
+    this.renderAll()
+    this.focusDraft(d.id)
+  }
+
+  // Names an entry uniquely within its thread (a comment can hold several).
+  private entryKey = (thread: Thread, e: Entry) => `${e.commentId}:${thread.entries.indexOf(e)}`
+
+  private focusDraft(id: string) {
+    const ta = this.besideEl.querySelector(`textarea[data-draft-id="${id}"]`) as HTMLTextAreaElement | null
+    if (!ta) return
     ta.focus({ preventScroll: true })
     ta.setSelectionRange(ta.value.length, ta.value.length)
-    this.paneWrap.scrollTo({ top: this.paneWrap.scrollHeight, behavior: 'smooth' })
   }
 
-  private openReply(blk: Block, entry: Entry | null) {
-    const thread = this.threads.find((t) => t.rootId === this.view)
-    if (!thread) return
-    // Quote their words, not their reaction: the note minus its leading emoji.
-    if (entry) this.addToDraft({ commentId: entry.commentId, author: entry.author }, blk.quotes, blk.nths, splitLeadingEmojis(entry.block.note).text)
-    else this.addToDraft({ commentId: thread.rootId, author: thread.author }, blk.quotes, blk.nths)
+  private discardDraft(id: string) {
+    this.drafts = this.drafts.filter((d) => d.id !== id)
+    this.saveDrafts()
+    const t = this.currentThread()
+    if (t) { this.rebuildThread(t); this.gutterCache = null }
+    this.renderAll()
   }
 
-  // The pane and the buttons that go with a draft.
+  // The unsent replies, on the card: one editable, highlighted entry each.
+  private draftHtml(d: Draft): string {
+    return `<div class="mg-entry mg-draft" data-draft="${esc(d.id)}">
+      <div class="mg-who"><b>You</b> · unsent reply to ${esc(d.author)} <button class="mg-draftx" data-discard="${esc(d.id)}" title="Discard this reply">${ICON.close}</button></div>
+      <textarea data-draft-id="${esc(d.id)}" rows="1" placeholder="Your reply… (emoji at the front is a reaction)">${esc(d.note)}</textarea>
+    </div>`
+  }
+
+  private wireDrafts(card: HTMLElement) {
+    card.querySelectorAll<HTMLTextAreaElement>('textarea[data-draft-id]').forEach((ta) => {
+      const d = this.drafts.find((x) => x.id === ta.dataset.draftId)
+      if (!d) return
+      const grow = () => { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight + 2}px` }
+      grow()
+      ta.addEventListener('input', () => {
+        d.note = ta.value
+        grow()
+        this.saveDrafts()
+        this.layoutBeside()    // the card grew; neighbours move
+        this.renderDraft()     // the count on Send
+      })
+      ta.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); ta.blur() } })
+      ta.addEventListener('mousedown', (e) => e.stopPropagation())
+      ta.addEventListener('click', (e) => e.stopPropagation())
+    })
+    card.querySelectorAll<HTMLElement>('[data-discard]').forEach((b) => b.addEventListener('click', (e) => {
+      e.stopPropagation()
+      this.discardDraft(b.dataset.discard!)
+    }))
+  }
+
+  // What the pane shows while a thread is up: the replies as they will be
+  // posted, one comment per person. Read-only; the cards are where you write.
+  private previewText(thread: Thread): string {
+    const byTarget = new Map<string, Draft[]>()
+    for (const d of this.threadDrafts(thread)) { const l = byTarget.get(d.target) ?? []; l.push(d); byTarget.set(d.target, l) }
+    if (!byTarget.size) return ''
+    return [...byTarget.values()].map((ds) => `— reply to ${ds[0].author} —\n\n${withFooter(serializeBody(ds.map((d) => ({ quotes: d.quotes, nths: d.nths, note: d.note, re: d.re }))))}`).join('\n\n')
+  }
+
+  // Send button + preview. The count is replies written over notes in the
+  // thread that could be replied to (reactions don't count on either side).
   private renderDraft() {
-    const foreign = this.view !== 'mine'
-    const d = foreign ? this.draft() : undefined
-    const ta = this.paneEl
+    const thread = this.currentThread()
+    const foreign = !!thread
+    const ds = thread ? this.threadDrafts(thread).filter(this.isReply) : []
+    const n = thread ? thread.entries.filter((e) => hasCommentText(splitLeadingEmojis(e.block.note).text)).length : 0
     if (foreign) {
-      if (document.activeElement !== ta || ta.value !== (d?.md ?? '')) ta.value = d?.md ?? ''
-      ta.placeholder = d ? `Reply to ${d.author}: press Reply on a note, or select text, to quote it here.` : ''
+      this.paneEl.readOnly = true
+      this.paneEl.value = this.previewText(thread!)
+      this.paneEl.placeholder = `Press Reply on a note to write beneath it. What you write shows here as it will be posted.`
       this.renderPaneBack()
+    } else {
+      this.paneEl.readOnly = false
+      this.paneEl.placeholder = 'Select text on the page and it lands here as a quote. Write your reply beneath it.'
     }
-    const has = !!d?.md.trim()
-    const others = foreign ? Object.entries(this.drafts).filter(([id, x]) => id !== this.draftTarget && x.md.trim()) : []
     for (const root of [this.sidebar, this.bar]) {
       const send = root.querySelector('[data-act="send"]') as HTMLButtonElement
-      send.hidden = !foreign
-      send.disabled = !has
-      send.textContent = d ? `Send reply to ${d.author}` : 'Send reply'
+      send.hidden = !foreign || !ds.length
+      send.textContent = `Send replies · ${ds.length}/${n}`
       ;(root.querySelector('[data-act="copy"]') as HTMLElement).hidden = foreign
-      const sel = root.querySelector('[data-draft]') as HTMLSelectElement
-      sel.hidden = !foreign || !others.length
-      sel.innerHTML = [`<option value="${esc(this.draftTarget ?? '')}">${esc(d?.author ?? '')}</option>`]
-        .concat(others.map(([id, x]) => `<option value="${esc(id)}">${esc(x.author)} (draft)</option>`)).join('')
     }
   }
 
-  // Send the draft through the site's own reply box: opened and pre-filled
-  // when the comment is on the page, otherwise via its permalink with the text
-  // on the clipboard and the userscript to finish the job. You press Post;
-  // Marginer never posts for you.
-  private async sendDraft() {
+  // Send every draft in the thread: one comment per person replied to, each
+  // through that comment's own reply box, pre-filled for you to post. A comment
+  // that isn't on the page goes by its permalink (the userscript fills it in).
+  private async sendDrafts() {
     const site = this.site
-    const id = this.draftTarget
-    const d = this.draft()
-    if (!site || !id || !d?.md.trim()) return
-    this.flushDraft()
-    const text = withFooter(d.md)
-    try { await navigator.clipboard.writeText(text) } catch { /* no clipboard: the prefill may still work */ }
-    const ta = await site.openReplyBox(id)
-    if (ta) {
-      fillTextarea(ta, text)
-      ta.scrollIntoView({ block: 'center', behavior: 'smooth' })
-      delete this.drafts[id]
-      this.saveDrafts()
-      // On to the next draft in this thread, if there is one.
-      this.draftTarget = Object.keys(this.drafts).find((k) => this.drafts[k].md.trim()) ?? id
-      if (!this.drafts[this.draftTarget]) this.drafts[this.draftTarget] = { author: d.author, md: '' }
-      this.renderDraft()
-      this.toast(`Reply to ${d.author} is in its box below — press Post`)
-      return
+    const thread = this.currentThread()
+    if (!site || !thread) return
+    const byTarget = new Map<string, Draft[]>()
+    for (const d of this.threadDrafts(thread)) if (d.note.trim()) { const l = byTarget.get(d.target) ?? []; l.push(d); byTarget.set(d.target, l) }
+    let filled = 0
+    let travel: Pending | null = null
+    for (const [target, ds] of byTarget) {
+      const text = withFooter(serializeBody(ds.map((d) => ({ quotes: d.quotes, nths: d.nths, note: d.note, re: d.re }))))
+      const ta = await site.openReplyBox(target)
+      if (ta) {
+        fillTextarea(ta, text)
+        if (!filled) ta.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        filled++
+        this.drafts = this.drafts.filter((d) => d.target !== target)
+      } else if (!travel) {
+        travel = { url: site.permalink(target), id: target, text }
+        try { await navigator.clipboard.writeText(text) } catch { /* fine */ }
+        this.drafts = this.drafts.filter((d) => d.target !== target)
+      }
     }
-    const pending: Pending = { url: site.permalink(id), id, text }
-    try { localStorage.setItem(PENDING_KEY, JSON.stringify(pending)) } catch { /* fine */ }
-    delete this.drafts[id]
     this.saveDrafts()
-    this.toast('Reply copied — opening the comment…')
-    setTimeout(() => { location.href = pending.url }, 600)
-  }
-
-  private flushDraft() {
-    const d = this.draft()
-    if (d && this.view !== 'mine') { d.md = this.paneEl.value; this.saveDrafts() }
+    this.rebuildThread(thread)
+    this.renderAll()
+    this.renderDraft()
+    if (filled) this.toast(filled === 1 ? 'Your reply is in its box below — press Post' : `${filled} replies are in their boxes below — press Post on each`)
+    if (travel) {
+      try { localStorage.setItem(PENDING_KEY, JSON.stringify(travel)) } catch { /* fine */ }
+      this.toast('Reply copied — opening the comment…')
+      setTimeout(() => { location.href = travel!.url }, 900)
+    }
   }
 
   // Below the narrow breakpoint there is no gutter to put cards in, so view
@@ -906,6 +1012,8 @@ export class Marginer {
 
     // Preserve the open editor across a re-render triggered by something else.
     const editing = this.cardEditor ? { id: this.focused, val: this.cardEditor.value, sel: this.cardEditor.selectionStart } : null
+    const active = document.activeElement as HTMLTextAreaElement | null
+    const draftFocus = active?.dataset?.draftId ? { id: active.dataset.draftId, sel: active.selectionStart } : null
     this.detachEditor()
     this.besideEl.innerHTML = ''
     if (this.layout() !== 'beside') return
@@ -915,6 +1023,10 @@ export class Marginer {
     if (!shown.length) { this.reserve(''); return } // nothing to make room for
     for (const blk of shown) this.besideEl.appendChild(this.buildCard(blk))
     this.layoutBeside()
+    if (draftFocus) {
+      const ta = this.besideEl.querySelector(`textarea[data-draft-id="${draftFocus.id}"]`) as HTMLTextAreaElement | null
+      if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(draftFocus.sel, draftFocus.sel) }
+    }
     const ed: HTMLTextAreaElement | undefined = this.cardEditor
     if (ed && editing?.id && this.focused === editing.id) {
       ed.value = editing.val
@@ -1029,19 +1141,26 @@ export class Marginer {
       // Someone else's: every entry quoting this passage, in thread order, each
       // with a Reply. Read-only on the page.
       card.classList.add('mg-foreign')
-      card.innerHTML = quoteHtml + `<div class="mg-thread">` + blk.thread.map((e, i) => {
+      const anchorKey = `${blk.nths[0] ?? 1}:${blk.quotes.join(' | ')}`
+      const mine = this.drafts.filter((d) => `${d.nths[0] ?? 1}:${d.quotes.join(' | ')}` === anchorKey)
+      const thread = this.currentThread()
+      const entriesHtml = blk.thread.map((e, i) => {
         const { emojis, text } = splitLeadingEmojis(e.block.note)
+        const under = thread ? mine.filter((d) => d.entryKey === this.entryKey(thread, e)) : []
         return `<div class="mg-entry" style="margin-left:${Math.min(e.depth, 4) * 12}px" data-entry="${i}">
           <div class="mg-who"><b>${esc(e.author)}</b> <a href="${esc(e.permalink)}" title="This comment on the page">↗</a></div>
           ${text.trim() ? `<div class="mg-md">${renderMarkdown(text)}</div>` : ''}
           ${emojis.length ? `<div class="mg-entry-emoji">${emojis.map((x) => esc(x)).join(' ')}</div>` : ''}
-          <button class="mg-btn tiny ghost" data-reply="${i}">Reply</button>
+          ${under.length ? under.map((d) => this.draftHtml(d)).join('') : `<button class="mg-btn tiny ghost" data-reply="${i}">Reply</button>`}
         </div>`
-      }).join('') + `</div>`
+      }).join('')
+      const fresh = mine.filter((d) => !d.entryKey).map((d) => this.draftHtml(d)).join('')
+      card.innerHTML = quoteHtml + `<div class="mg-thread">${entriesHtml}${fresh}</div>`
       card.querySelectorAll<HTMLElement>('[data-reply]').forEach((b) => b.addEventListener('click', (ev) => {
         ev.stopPropagation()
         this.openReply(blk, blk.thread![Number(b.dataset.reply)])
       }))
+      this.wireDrafts(card)
       card.addEventListener('click', () => this.focus(blk.id, true))
       card.addEventListener('mouseenter', () => this.setHovered(blk.id))
       card.addEventListener('mouseleave', () => this.setHovered(null))
@@ -1202,8 +1321,8 @@ export class Marginer {
     if (this.view !== 'mine') {
       const t = this.threads.find((x) => x.rootId === this.view)
       const pieces = quotePiecesFromRange(range, document.body)
-      if (t && pieces?.quotes.length) this.addToDraft({ commentId: t.rootId, author: t.author }, pieces.quotes, pieces.nths)
       window.getSelection()?.removeAllRanges()
+      if (t && pieces?.quotes.length) this.quoteIntoReply(pieces.quotes, pieces.nths)
       return
     }
     if (this.paneOpen()) this.appendQuote(range.cloneRange())

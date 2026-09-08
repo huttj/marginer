@@ -68,6 +68,7 @@ const server = createServer((req, res) => {
   const json = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)) }
   const html = (h) => { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(h) }
   if (u.pathname === '/p/on-marginalia') return html(page)
+  if (u.pathname === '/home/post/p-42') return html(page.replace('<link rel="preconnect"', `<link rel="canonical" href="${origin}/p/on-marginalia"><link rel="preconnect"`))
   if (u.pathname.startsWith('/p/on-marginalia/comment/')) return html(permalinkPage(u.pathname.split('/').pop()))
   if (u.pathname === '/api/v1/posts/on-marginalia') return json({ id: 42, slug: 'on-marginalia' })
   if (u.pathname === '/api/v1/post/42/comments') return json({ comments })
@@ -76,6 +77,7 @@ const server = createServer((req, res) => {
 })
 await new Promise((r) => server.listen(0, '127.0.0.1', r))
 const origin = `http://127.0.0.1:${server.address().port}`
+
 
 // No vsync: headless Chrome on macOS can wait forever for a display frame (no
 // requestAnimationFrame, no screenshots), and hover throttling rides on rAF.
@@ -131,55 +133,65 @@ ok('replies are indented under what they answer', honest && honest.entries.map((
 ok('a reaction shows as a reaction, not as prose', honest && honest.entries[0].emoji === '🔥' && !honest.entries[0].text.includes('🔥'))
 ok('the passage Maria quoted afresh in her reply is its own card', cards.some((c) => c.quote === 'Markdown travels' && c.entries[0].who === 'Maria' && c.entries[0].text === 'Agreed here too.'))
 ok('cards are read-only: no ✕, no editor', await pg.$('.mg-beside .mg-cardx') === null && await pg.$('.mg-beside textarea') === null)
-ok('the pane is an empty reply draft while a thread is up', await pg.$eval('.mg-pane', (e) => !e.readOnly && e.value === '' && e.placeholder.startsWith('Reply to Maria')))
+ok('the pane is a read-only preview while a thread is up', await pg.$eval('.mg-pane', (e) => e.readOnly && e.value === ''))
 ok('own notes are parked, not shown', await pg.evaluate(() => !document.body.textContent.includes('my own note') || !document.querySelector('.mg-beside .mg-card:not(.mg-foreign)')))
 ok('nothing of the thread was saved as ours', !(await pg.evaluate(() => localStorage.getItem('marginer:' + location.href.replace(/#.*/, '')) ?? '')).includes('Overstated'))
 
-// --- replies accumulate into a draft per comment ------------------------------
-const paneVal = () => pg.$eval('.mg-pane', (e) => e.value)
-await click('.mg-beside .mg-card.mg-foreign [data-reply="1"]')   // Tom's entry
+// --- replies are written on the cards, highlighted until sent -----------------
+const card1 = '.mg-beside .mg-card.mg-foreign:nth-child(1)'
+ok('no Send button before any reply is written', await pg.$eval('.mg-bar [data-act="send"]', (b) => b.hidden))
+await click(`${card1} [data-reply="1"]`)   // Tom's entry
 await wait(300)
-ok('Reply opens the pane as a draft to that comment', await pg.$eval('.mg-sidebar', (e) => e.style.display === '') && await pg.$eval('.mg-pane', (e) => document.activeElement === e && !e.readOnly))
-ok('...with the article quote nested under Tom\'s note, caret beneath', (await paneVal()) === '> > only honest reading anyone ever gives a text\n> Not overstated at all — that narrower thing is exactly what he meant.\n\n')
-ok('...and Send named for him', await pg.$eval('.mg-sidebar [data-act="send"]', (b) => !b.hidden && b.textContent === 'Send reply to Tom'))
+ok('Reply puts an editable, highlighted reply under Tom\'s entry', await pg.evaluate(() => {
+  const d = document.querySelector('.mg-beside .mg-card.mg-foreign [data-entry="1"] .mg-draft')
+  return !!d && d.textContent.includes('unsent reply to Tom') && document.activeElement === d.querySelector('textarea')
+}))
+ok('the sidebar stayed closed', await pg.$eval('.mg-sidebar', (e) => e.style.display === 'none'))
 await pg.keyboard.type('Then we agree more than we thought.')
 await wait(200)
-// now Maria, twice: her note on this passage, and her note on another
-await click('.mg-sidebar [data-act="mode"]')      // back to view mode to reach the cards
+ok('Send appears with the count: 1 reply, 5 notes that can be replied to', await pg.$eval('.mg-bar [data-act="send"]', (b) => !b.hidden && b.textContent === 'Send replies · 1/5'), await pg.$eval('.mg-bar [data-act="send"]', (b) => b.textContent))
+// Maria, twice: her note on this passage, and her note on another passage
+await click(`${card1} [data-reply="0"]`)
 await wait(300)
-await click('.mg-beside .mg-card.mg-foreign [data-reply="0"]')
-await wait(300)
-ok('a reply to a different comment starts its own draft', (await paneVal()).startsWith('> > only honest reading anyone ever gives a text\n> Overstated, but I like it.\n\n'))
 await pg.keyboard.type('Also this.')
-await click('.mg-sidebar [data-act="mode"]')
-await wait(300)
-const second = await pg.$$('.mg-beside .mg-card.mg-foreign')
-await second[1].evaluate((el) => el.scrollIntoView({ block: 'center' }))
 await click('.mg-beside .mg-card.mg-foreign:nth-child(2) [data-reply="0"]')
 await wait(300)
-ok('a second reply to the same comment accumulates in that draft', /^> > only honest[\s\S]*Also this\.\n\n\n> > argument in miniature\n> This is the thesis\.\n\n$/.test(await paneVal()), JSON.stringify(await paneVal()))
 await pg.keyboard.type('And this.')
 await wait(200)
-ok('both drafts are offered', await pg.$$eval('.mg-sidebar [data-draft] option', (os) => os.map((o) => o.textContent).join('|')) === 'Maria|Tom (draft)')
-if (process.env.MG_SHOT2) { await pg.screenshot({ path: process.env.MG_SHOT2 }) }
+ok('three replies, two of them to Maria', await pg.$eval('.mg-bar [data-act="send"]', (b) => b.textContent === 'Send replies · 3/5'))
+// a reaction-only reply is sent along but not counted
+await click('.mg-beside .mg-card.mg-foreign:nth-child(1) [data-reply="2"]')
+await wait(300)
+await pg.keyboard.sendCharacter('👍')
+await wait(200)
+if (process.env.MG_SHOT2) { await pg.evaluate(() => window.scrollTo(0, 0)); await wait(300); await pg.screenshot({ path: process.env.MG_SHOT2 }) }
+ok('a bare reaction does not count as a reply', await pg.$eval('.mg-bar [data-act="send"]', (b) => b.textContent === 'Send replies · 3/5'))
+ok('the pane previews the replies as they will be posted', await pg.evaluate(() => { const v = document.querySelector('.mg-pane').value; return v.includes('— reply to Maria —') && v.includes('— reply to Tom —') && v.includes('> > argument in miniature\n> This is the thesis.\n\nAnd this.') }))
+// discard one
+await click('.mg-beside .mg-card.mg-foreign:nth-child(1) [data-entry="2"] [data-discard]')
+await wait(300)
+ok('a reply can be discarded', await pg.$$eval('.mg-draft', (ds) => ds.length === 3))
 
-// send Maria's
+// unsent replies survive a reload
+await pg.reload({ waitUntil: 'load' })
+await pg.evaluate(bundle)
+await wait(700)
+await pg.select('.mg-bar [data-view]', '101')
+await wait(400)
+ok('unsent replies are still on the cards after a reload', await pg.$$eval('.mg-draft textarea', (ts) => ts.map((t) => t.value).sort().join('|')) === 'Also this.|And this.|Then we agree more than we thought.')
+
+// send: one comment per person, each in its own reply box
 await pg.evaluate(() => { navigator.clipboard.writeText = async () => {} })
-await click('.mg-sidebar [data-act="send"]')
-await wait(1500)
+await click('.mg-bar [data-act="send"]')
+await wait(2500)
 const toMaria = await pg.$eval('textarea[data-reply-to="101"]', (e) => e.value).catch(() => null)
-ok('Send opens Maria\'s own reply box (not a child\'s) and fills it', !!toMaria, 'no reply box under comment 101')
-ok('...with both blocks, replies beneath each, and the attribution line', !!toMaria && /^> > only honest reading anyone ever gives a text\n> Overstated, but I like it\.\n\nAlso this\.\n\n\n> > argument in miniature\n> This is the thesis\.\n\nAnd this\.\n\n✍️ marginer\.app/.test(toMaria), JSON.stringify(toMaria))
-ok('Tom\'s draft is now the one up', await pg.$eval('.mg-sidebar [data-act="send"]', (b) => b.textContent === 'Send reply to Tom') && (await paneVal()).includes('Then we agree'))
-await click('.mg-sidebar [data-act="send"]')
-await wait(1500)
 const toTom = await pg.$eval('textarea[data-reply-to="102"]', (e) => e.value).catch(() => null)
-ok('...and sends to Tom\'s box', !!toTom && toTom.startsWith('> > only honest reading anyone ever gives a text\n> Not overstated at all') && toTom.includes('\n\nThen we agree more than we thought.\n'))
+ok('Maria\'s reply box holds both replies to her, nested, with the attribution', !!toMaria && /^> > only honest reading anyone ever gives a text\n> Overstated, but I like it\.\n\nAlso this\.\n\n\n> > argument in miniature\n> This is the thesis\.\n\nAnd this\.\n\n✍️ marginer\.app/.test(toMaria), JSON.stringify(toMaria))
+ok('Tom\'s reply box holds the reply to him', !!toTom && toTom.startsWith('> > only honest reading anyone ever gives a text\n> Not overstated at all') && toTom.includes('\n\nThen we agree more than we thought.\n'))
+ok('the drafts are gone, the button with them', await pg.$('.mg-draft') === null && await pg.$eval('.mg-bar [data-act="send"]', (b) => b.hidden))
 ok('nothing was posted or stored as ours', !(await pg.evaluate(() => window.__marginer.markdown())).includes('agree more'))
 
-// --- a fresh quote while viewing a thread goes into the root's draft ---------
-await click('.mg-sidebar [data-act="mode"]')
-await wait(200)
+// --- a fresh quote while viewing a thread: a reply to the author on its own card
 await pg.evaluate(() => {
   const w = document.createTreeWalker(document.querySelector('article'), NodeFilter.SHOW_TEXT); let n
   while ((n = w.nextNode())) { const i = n.data.indexOf('Coleridge filled'); if (i < 0) continue
@@ -188,25 +200,28 @@ await pg.evaluate(() => {
     document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); return }
 })
 await wait(300)
-ok('a selection quotes into a reply to Maria\'s comment, not a note of our own', (await paneVal()) === '> Coleridge filled\n\n' && await pg.$eval('.mg-sidebar [data-act="send"]', (b) => b.textContent === 'Send reply to Maria') && await pg.$('.mg-compose') === null)
-await pg.keyboard.type('draft that should survive a reload')
-await wait(300)
-
-// --- drafts persist ------------------------------------------------------------
-await pg.reload({ waitUntil: 'load' })
-await pg.evaluate(bundle)
-await wait(700)
-await pg.select('.mg-bar [data-view]', '101')
-await wait(400)
-ok('the draft is still there after a reload', (await paneVal()).includes('draft that should survive a reload'))
-await pg.$eval('.mg-pane', (e) => { e.value = ''; e.dispatchEvent(new Event('input', { bubbles: true })) })
+ok('a selection becomes a reply to Maria on a new card at that passage, not a note of our own', await pg.evaluate(() => {
+  const c = [...document.querySelectorAll('.mg-beside .mg-card.mg-foreign')].find((c) => c.querySelector('.mg-quote').textContent.trim() === 'Coleridge filled')
+  return !!c && c.querySelector('.mg-draft')?.textContent.includes('unsent reply to Maria') && document.activeElement === c.querySelector('textarea') && !document.querySelector('.mg-compose')
+}))
+await pg.keyboard.type('a fresh point')
 await wait(200)
+ok('...counted as a reply', await pg.$eval('.mg-bar [data-act="send"]', (b) => b.textContent === 'Send replies · 1/5'))
+await click('[data-discard]')
+await wait(300)
 
 // --- back to our own ------------------------------------------------------------
 await pg.select('.mg-bar [data-view]', 'mine')
 await wait(400)
 ok('own notes come back intact', (await pg.evaluate(() => window.__marginer.markdown())).includes('my own note') && await pg.evaluate(() => CSS.highlights.get('marginer')?.size) === 1)
-ok('the pane shows our document again', (await paneVal()).includes('my own note') && await pg.$eval('.mg-sidebar [data-act="send"]', (b) => b.hidden))
+ok('the pane shows our document again', await pg.$eval('.mg-pane', (e) => !e.readOnly && e.value.includes('my own note')) && await pg.$eval('.mg-sidebar [data-act="send"]', (b) => b.hidden))
+
+// --- the reader page: substack.com/home/post/p-<id> -------------------------------
+await pg.goto(`${origin}/home/post/p-42`, { waitUntil: 'load' })
+await pg.evaluate(bundle)
+await wait(700)
+ok('the reader page finds the same threads (via the canonical link)', await pg.$$eval('.mg-bar [data-view] option', (os) => os.map((o) => o.textContent).join('|')) === 'Your notes|Maria · 5|Ann · 1')
+
 
 // --- the permalink fallback: no comment on the page -> userscript fills the box --
 await pg.evaluate(() => localStorage.setItem('marginer:pending-reply', JSON.stringify({ url: location.origin + '/p/on-marginalia/comment/102', id: '102', text: 'a reply that travelled' })))
