@@ -1,5 +1,5 @@
 import esbuild from 'esbuild'
-import { mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from 'node:fs'
 
 const watch = process.argv.includes('--watch')
 const { version, description } = JSON.parse(readFileSync('package.json', 'utf8'))
@@ -54,8 +54,11 @@ const core = {
         // Wrapped in a void IIFE so the href never replaces the document.
         const bm = 'javascript:' + encodeURIComponent(`(function(){${js}})();void 0`)
         writeFileSync('dist/bookmarklet.txt', bm)
-        // dist/ doubles as the website: this page is its front door.
-        writeFileSync('dist/index.html', installPage(bm))
+        // dist/ doubles as the website (marginer.app): site/ is its front door,
+        // with the bookmarklet's href filled in, plus its images.
+        const page = readFileSync('site/index.html', 'utf8').replaceAll('__BM__', bm.replace(/&/g, '&amp;').replace(/"/g, '&quot;'))
+        writeFileSync('dist/index.html', page)
+        for (const f of readdirSync('site')) if (f !== 'index.html') copyFileSync(`site/${f}`, `dist/${f}`)
         console.log(`→ extension/marginer.js    ${kb(js.length)}`)
         console.log(`→ dist/bookmarklet.txt     ${kb(bm.length)}`)
         console.log(`→ dist/index.html          install page`)
@@ -82,51 +85,6 @@ const userscript = {
   }],
 }
 
-const installPage = (bm) => `<!doctype html>
-<meta charset="utf-8"><title>Marginer — install</title>
-<style>
-  :root { color-scheme: light dark; }
-  body { font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-         max-width: 46rem; margin: 3.5rem auto; padding: 0 1.5rem; }
-  h1 { font-size: 1.6rem; margin-bottom: .25rem; }
-  h2 { font-size: 1.1rem; margin: 2.4rem 0 .4rem; }
-  p.sub { color: #6b7280; margin-top: 0; }
-  a.bm { display: inline-block; background: #b9770a; color: #fff; text-decoration: none;
-         font-weight: 700; padding: .7rem 1.3rem; border-radius: .6rem; cursor: grab; }
-  ol { padding-left: 1.2rem; } li { margin: .4rem 0; }
-  code { background: rgba(128,128,128,.18); padding: .1rem .35rem; border-radius: .25rem; }
-  table { border-collapse: collapse; margin-top: .8rem; font-size: .93rem; }
-  td, th { border: 1px solid rgba(128,128,128,.3); padding: .4rem .7rem; text-align: left; }
-</style>
-<h1>Marginer</h1>
-<p class="sub">Highlight any page, add notes and emoji, export as markdown.</p>
-
-<h2>Bookmarklet</h2>
-<ol>
-  <li>Show your bookmarks bar (<code>⌘⇧B</code> / <code>Ctrl+Shift+B</code>).</li>
-  <li>Drag this button onto it: <a class="bm" href="${bm.replace(/"/g, '&quot;')}">✍️ Marginer</a></li>
-  <li>Open any page and click the bookmark. Click it again to collapse.</li>
-</ol>
-
-<h2>Userscript — adds the "this page has notes" indicator</h2>
-<p>A bookmarklet can't tell you a page is already annotated: nothing of it runs
-until you click it. With <a href="https://www.tampermonkey.net/">Tampermonkey</a>
-or Violentmonkey installed, <a class="bm" href="marginer.user.js">Install the userscript</a>
-and revisiting an annotated page brings your highlights back on its own, with a
-small pill in the corner showing the count. Press <code>⌘⇧U</code> /
-<code>Ctrl+Shift+U</code> to open it anywhere else.</p>
-<p>It reads the same storage as the bookmarklet, so you can install both.</p>
-
-<h2>Which one?</h2>
-<table>
-  <tr><th></th><th>Bookmarklet</th><th>Userscript</th><th>Extension</th></tr>
-  <tr><td>Install</td><td>drag a link</td><td>needs Tampermonkey</td><td>load unpacked</td></tr>
-  <tr><td>Shows a page has notes</td><td>no</td><td>yes</td><td>on click</td></tr>
-  <tr><td>Works on strict-CSP sites</td><td>often not</td><td>yes</td><td>yes</td></tr>
-  <tr><td>Notes stored in</td><td>site localStorage</td><td>site localStorage</td><td>chrome.storage</td></tr>
-</table>
-<p style="color:#6b7280">Notes are keyed by URL and never leave your browser.</p>
-`
 
 if (watch) {
   for (const opts of [core, userscript]) { const ctx = await esbuild.context(opts); await ctx.watch() }

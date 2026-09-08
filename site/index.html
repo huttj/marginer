@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marginer — highlight any page, paste the notes anywhere</title>
+<meta name="description" content="Select text on any web page, add a note or a reaction, and walk away with markdown you can paste into a comment. On Substack, the comment is the shared annotation: anyone with Marginer sees it on the page.">
+<meta property="og:title" content="Marginer">
+<meta property="og:description" content="Highlight any page. Paste the notes anywhere. Read others' notes in place.">
+<meta property="og:image" content="https://marginer.app/overview.png">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✍️</text></svg>">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fffdf9; --fg: #1d1a16; --muted: #6b665e; --line: #e8e2d6;
+    --accent: #b9770a; --accent-ink: #fff; --tint: rgba(255, 196, 64, .34); --card: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1b1a18; --fg: #ebe7df; --muted: #a39d92; --line: #35322c; --accent: #e0a52e; --accent-ink: #1a1a1a; --card: #232120; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 62rem; margin: 0 auto; padding: 0 1.5rem; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 1.2rem 0; }
+  .brand { font-weight: 700; text-decoration: none; color: var(--fg); font-size: 1.05rem; }
+  nav a { color: var(--muted); text-decoration: none; margin-left: 1.4rem; font-size: .95rem; }
+  nav a:hover { color: var(--fg); }
+
+  .hero { padding: 3rem 0 1.5rem; max-width: 40rem; }
+  h1 { font-size: clamp(2rem, 5vw, 3rem); line-height: 1.1; margin: 0 0 1rem; letter-spacing: -.01em; }
+  h1 mark { background: var(--tint); color: inherit; padding: 0 .15em; border-radius: .2em; }
+  .lede { font-size: 1.2rem; color: var(--muted); margin: 0 0 1.6rem; }
+  .cta { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; }
+  .btn { display: inline-flex; align-items: center; gap: .5rem; background: var(--accent); color: var(--accent-ink); text-decoration: none; font-weight: 600; padding: .75rem 1.2rem; border-radius: .7rem; }
+  .btn.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+  .btn.bm { cursor: grab; }
+  .note { font-size: .9rem; color: var(--muted); }
+
+  .shot { margin: 2.5rem 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.12); background: var(--card); }
+  .shot img { display: block; width: 100%; height: auto; }
+  figcaption { font-size: .9rem; color: var(--muted); margin: .6rem 0 0; }
+
+  section { padding: 2.5rem 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 1.55rem; margin: 0 0 1rem; letter-spacing: -.01em; }
+  h3 { font-size: 1.05rem; margin: 0 0 .4rem; }
+  p { margin: 0 0 1rem; }
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1.4rem; margin-top: 1.4rem; }
+  .step { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem 1.3rem; }
+  .step .n { display: inline-grid; place-items: center; width: 1.7rem; height: 1.7rem; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: .9rem; margin-bottom: .7rem; }
+  pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.2rem; overflow-x: auto; font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code { font: .92em ui-monospace, SFMono-Regular, Menlo, monospace; background: rgba(128,128,128,.14); padding: .05em .35em; border-radius: .3em; }
+  pre code { background: none; padding: 0; }
+
+  .installs { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1.4rem; margin-top: 1.2rem; }
+  .install { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1.3rem 1.4rem; display: flex; flex-direction: column; gap: .6rem; }
+  .install .tag { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .install .btn { align-self: flex-start; margin-top: .3rem; }
+  .install ol { padding-left: 1.2rem; margin: .2rem 0 0; font-size: .95rem; }
+  .install li { margin: .25rem 0; }
+  table { border-collapse: collapse; margin-top: 1.4rem; font-size: .95rem; width: 100%; }
+  th, td { border-bottom: 1px solid var(--line); padding: .55rem .6rem; text-align: left; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+
+  .faq details { border-bottom: 1px solid var(--line); padding: .8rem 0; }
+  .faq summary { cursor: pointer; font-weight: 600; }
+  .faq details p { margin: .6rem 0 0; color: var(--muted); }
+
+  footer { padding: 2.5rem 0 3rem; color: var(--muted); font-size: .92rem; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; }
+</style>
+
+<div class="wrap">
+  <header>
+    <a class="brand" href="/">✍️ Marginer</a>
+    <nav><a href="#how">How it works</a><a href="#install">Install</a><a href="https://github.com/huttj/marginer">GitHub</a></nav>
+  </header>
+
+  <div class="hero">
+    <h1>Highlight any page.<br>Paste the notes <mark>anywhere</mark>.</h1>
+    <p class="lede">Select text on any web page, add a note or a reaction, and walk away with markdown you can paste into a comment, a pull request, an email. On Substack, the comment <em>is</em> the shared annotation: anyone with Marginer sees it on the page, and replies in place.</p>
+    <div class="cta">
+      <a class="btn bm" href="__BM__" title="Drag me to your bookmarks bar">✍️ Marginer</a>
+      <span class="note">← drag to your bookmarks bar, then click it on any page</span>
+    </div>
+  </div>
+
+  <figure class="shot">
+    <img src="overview.png" alt="An article with three passages highlighted; beside each, a card with a note and a reaction">
+  </figure>
+  <figcaption>Notes float beside the text they're about. Reactions sit in the margin.</figcaption>
+
+  <section id="how">
+    <h2>How it works</h2>
+    <div class="steps">
+      <div class="step"><span class="n">1</span><h3>Select, note, react</h3><p>The note panel opens on the selection. Type a note, tap a reaction, or type an emoji at the front — same thing.</p></div>
+      <div class="step"><span class="n">2</span><h3>Copy markdown</h3><p>Your notes are one markdown document: <code>&gt; quote</code> lines with the reply beneath each. Paste it into the post's comment box.</p></div>
+      <div class="step"><span class="n">3</span><h3>Read it in place</h3><p>Anyone with Marginer on that page sees the comment's quotes highlighted, with the notes beside them — and can reply to each, in the comments.</p></div>
+    </div>
+    <p style="margin-top:1.6rem">The markdown <em>is</em> the storage format. There's no database and no account; a page's notes are one string, and that string is what gets saved, what re-anchors on the next visit, and what lands on your clipboard:</p>
+<pre><code>&gt; the only honest reading anyone ever gives a text
+
+🔥 Overstated, but I like it. Compare Coleridge on Kant.
+
+
+&gt; Markdown travels
+
+👍
+
+✍️ marginer.app — see these highlights on the page</code></pre>
+  </section>
+
+  <section>
+    <h2>The comments are the annotations</h2>
+    <p>No server of ours is in the loop. The post's own comments are read (on Substack, through the same JSON the page itself loads), and every comment whose quotes are found in the article becomes a thread you can show on the page. The site keeps the comments; its identity, moderation and notifications apply. A hand-typed <code>&gt; quote</code> reply counts just the same.</p>
+    <figure class="shot">
+      <img src="thread.png" alt="A reader's thread shown beside the article: a passage with three entries — Maria, Tom's reply, Maria's reply — each with a Reply button">
+    </figure>
+    <figcaption>Pick a reader's thread; replies nest under the passage they argue about. Reply on an entry and the reply is drafted for that comment — you press Post.</figcaption>
+    <p style="margin-top:1.4rem">Replies are written the way email has always quoted: the passage nested under the words being answered.</p>
+<pre><code>&gt; &gt; the only honest reading anyone ever gives a text
+&gt; Overstated, but I like it.
+
+I don't think it's overstated — that narrower thing is exactly what he meant.</code></pre>
+  </section>
+
+  <section>
+    <h2>The sidebar is the document</h2>
+    <figure class="shot"><img src="pane.png" alt="The sidebar showing the markdown document as editable text, quote lines tinted, with the caret's quote brighter on the page"></figure>
+    <figcaption>Select on the page and the quote lands in the pane; type the reply beneath it. Edit the text and the page re-anchors as you type.</figcaption>
+  </section>
+
+  <section id="install">
+    <h2>Install</h2>
+    <p>Three ways to run the same tool. Notes never leave your browser.</p>
+    <div class="installs">
+      <div class="install">
+        <span class="tag">Zero install</span>
+        <h3>Bookmarklet</h3>
+        <p>Drag the button to your bookmarks bar; click it on any page. The whole tool rides inside the bookmark, so nothing is fetched and nothing is installed.</p>
+        <a class="btn bm" href="__BM__" title="Drag me to your bookmarks bar">✍️ Marginer</a>
+        <span class="note">Sites with a strict Content-Security-Policy refuse bookmarklets. Substack doesn't; GitHub does.</span>
+      </div>
+      <div class="install">
+        <span class="tag">Always on</span>
+        <h3>Userscript</h3>
+        <p>With <a href="https://www.tampermonkey.net/">Tampermonkey</a> or Violentmonkey, revisiting an annotated page brings your highlights back on its own, with a pill showing the count. <kbd>⌘⇧U</kbd> opens it anywhere.</p>
+        <a class="btn" href="marginer.user.js">Install the userscript</a>
+      </div>
+      <div class="install">
+        <span class="tag">Chrome</span>
+        <h3>Extension</h3>
+        <p>Survives any CSP. Not on the Web Store yet — load it unpacked:</p>
+        <ol>
+          <li><code>git clone https://github.com/huttj/marginer</code></li>
+          <li><code>npm install &amp;&amp; npm run build</code></li>
+          <li><code>chrome://extensions</code> → Developer mode → Load unpacked → <code>extension/</code></li>
+        </ol>
+        <a class="btn ghost" href="https://github.com/huttj/marginer">Source on GitHub</a>
+      </div>
+    </div>
+    <table>
+      <tr><th></th><th>Bookmarklet</th><th>Userscript</th><th>Extension</th></tr>
+      <tr><td>Install</td><td>drag a link</td><td>Tampermonkey</td><td>load unpacked</td></tr>
+      <tr><td>Shows a page has notes</td><td>on click</td><td>yes</td><td>on click</td></tr>
+      <tr><td>Works on strict-CSP sites</td><td>no</td><td>yes</td><td>yes</td></tr>
+      <tr><td>Notes stored in</td><td>site localStorage</td><td>site localStorage</td><td>chrome.storage</td></tr>
+    </table>
+  </section>
+
+  <section class="faq">
+    <h2>Questions</h2>
+    <details><summary>Where do my notes go?</summary><p>Nowhere. They're stored in your browser, keyed by the page's URL, as the same markdown you can copy. Marginer has no server and no accounts. The only thing that leaves your browser is what you paste into a comment yourself.</p></details>
+    <details><summary>Why a comment, and not a share button?</summary><p>Because the comment box already exists, the author already reads it, and everyone can read the notes as plain text whether or not they have the tool. Marginer only adds the in-place view. That also means the site's own rules apply: identity, moderation, notifications.</p></details>
+    <details><summary>Does it work on sites other than Substack?</summary><p>Highlighting and notes work on any page. Reading other people's comments in place needs an adapter for the site's comment system; Substack has one. Others are welcome — see the repo.</p></details>
+    <details><summary>What happens if the page changes?</summary><p>A note whose quoted text can no longer be found isn't thrown away: it's marked as unanchored, still shows in your document, and still exports.</p></details>
+    <details><summary>Is it Hypothesis?</summary><p>No. Hypothesis keeps annotations on its server, behind its accounts, invisible without the tool. Marginer's shared annotations are ordinary comments on the site, readable by anyone; the tool is just a better way to read and write them.</p></details>
+  </section>
+
+  <footer>
+    <span>Open source: <a href="https://github.com/huttj/marginer">github.com/huttj/marginer</a></span>
+    <span>Notes are keyed by URL and never leave your browser.</span>
+  </footer>
+</div>
+</html>

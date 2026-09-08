@@ -81,7 +81,7 @@ const origin = `http://127.0.0.1:${server.address().port}`
 // requestAnimationFrame, no screenshots), and hover throttling rides on rAF.
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-frame-rate-limit', '--disable-gpu-vsync'] })
 const pg = await browser.newPage()
-await pg.setViewport({ width: 1400, height: 900 })
+await pg.setViewport({ width: 1400, height: 900, deviceScaleFactor: process.env.MG_SHOT ? 2 : 1 })
 const errs = []
 pg.on('pageerror', (e) => errs.push(String(e)))
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))

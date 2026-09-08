@@ -59,7 +59,8 @@ on *Allow access to file URLs* in the extension's details.
 
 ### Bookmarklet
 
-`npm run build` also writes `dist/index.html` — open it and drag the button
+`npm run build` also writes `dist/index.html` (the marginer.app landing page,
+from `site/`) — open it and drag the button
 to your bookmarks bar. The whole tool is inlined in the URL, because a loader that
 fetches remote script is blocked by the Content-Security-Policy on most sites
 worth annotating. That makes for a large bookmark (~170 KB, most of it the emoji
