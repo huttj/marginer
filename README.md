@@ -102,7 +102,11 @@ the fix: install `dist/marginer.user.js` in Tampermonkey or Violentmonkey.
 
 Revisit a page you annotated and your highlights come back on their own, with a
 small pill in the bottom-right corner showing the count. Press ⌘⇧U / Ctrl+Shift+U
-to open Marginer anywhere else.
+to open Marginer anywhere else — or press ⚡ in its header to **opt the site
+in**, after which the userscript opens Marginer on every page there. The choice
+is per site (it lives in that site's own storage, alongside the notes), so a
+newsletter you read daily can have it always on while the rest of the web stays
+untouched.
 
 On a page with **no** notes it injects nothing at all — no styles, no nodes, no
 observers. It reads one `localStorage` key and stops. That key is the same one the

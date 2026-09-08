@@ -89,6 +89,27 @@ await page.evaluate(core) // the bookmarklet/extension bundle
 await new Promise((r) => setTimeout(r, 400))
 ok('bookmarklet sees the userscript’s notes', await page.evaluate(() => window.__marginer.blocks.length === 1 && CSS.highlights.get('marginer')?.size === 1))
 ok('...and exports them', (await page.evaluate(() => window.__marginer.markdown())).includes('Left for the next visit.'))
+ok('the bookmarklet offers no auto-open switch (it cannot honour one)', await page.$eval('.mg-bar [data-act="auto"]', (b) => b.hidden))
+
+// --- opting a site in: the userscript opens on every page there ---------------
+await page.reload({ waitUntil: 'load' })
+await page.evaluate(user)
+await new Promise((r) => setTimeout(r, 400))
+await click('.mg-fab')
+ok('the userscript offers the auto-open switch', await page.$eval('.mg-bar [data-act="auto"]', (b) => !b.hidden && !b.classList.contains('active')))
+await click('.mg-bar [data-act="auto"]')
+ok('...which turns on for this site', await page.$eval('.mg-bar [data-act="auto"]', (b) => b.classList.contains('active')) && await page.evaluate(() => localStorage.getItem('marginer:auto-open') === '1'))
+// a page on the same site with NO notes: it opens anyway now
+await page.goto('file://' + join(root, 'demo/dark.html'), { waitUntil: 'load' })
+await page.evaluate(user)
+await new Promise((r) => setTimeout(r, 500))
+ok('on an opted-in site, a page without notes gets the full UI', await page.$('.mg-bar') !== null && await page.$eval('.mg-bar', (e) => e.style.display === '') && await page.$('.mg-fab') === null)
+await click('.mg-bar [data-act="auto"]')
+ok('...and opting out again', await page.evaluate(() => localStorage.getItem('marginer:auto-open') === null))
+await page.goto('file://' + join(root, 'demo/dark.html'), { waitUntil: 'load' })
+await page.evaluate(user)
+await new Promise((r) => setTimeout(r, 400))
+ok('opted out, a page without notes gets nothing again', await page.$('[data-mg-ui]') === null)
 
 ok('no page errors', errs.length === 0, errs.join(' | '))
 await browser.close()

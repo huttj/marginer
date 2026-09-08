@@ -8,7 +8,7 @@ import { serializeBody, stripWrapper, withFooter } from './export'
 import {
   formatQuoteMarker, hasCommentText, parseSpans, renderMarkdown, serializeResponse, splitLeadingEmojis, type RBlock,
 } from './markdown'
-import { loadDoc, loadPrefs, pageKey, saveDoc } from './store'
+import { autoOpen, loadDoc, loadPrefs, pageKey, saveDoc, setAutoOpen } from './store'
 import { syncImageOverlays } from './overlay'
 import { CSS } from './styles'
 
@@ -42,6 +42,8 @@ const ICON = {
   beside: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h9M3 11h9M3 16h6"/><rect x="15" y="8" width="7" height="7" rx="1.5"/></svg>',
   list: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M14 3v18"/></svg>',
   copy: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  // auto-open on this site (the userscript)
+  bolt: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg>',
 }
 
 // View mode: cards float in the page's right gutter at the height of their
@@ -91,6 +93,7 @@ export class Marginer {
   // place on its card and highlighted until sent. Persisted per page.
   private drafts: Draft[] = []
   private reserved = ''             // the html margin we're currently claiming
+  private autoToggle = false
 
   private styleEl!: HTMLStyleElement
   private layer!: HTMLElement       // document-anchored: margin chips + image boxes
@@ -129,7 +132,10 @@ export class Marginer {
 
   // `collapsed` boots as a passive indicator (the userscript on a page it already
   // knows): highlights and the pill only, notes on hover.
-  async init(opts?: { collapsed?: boolean }) {
+  // `autoOpenToggle` offers the per-site "open on its own" switch -- only the
+  // userscript can honour it, so only the userscript asks for it.
+  async init(opts?: { collapsed?: boolean; autoOpenToggle?: boolean }) {
+    this.autoToggle = !!opts?.autoOpenToggle
     this.styleEl = document.createElement('style')
     this.styleEl.setAttribute('data-mg-ui', '')
     this.styleEl.textContent = CSS
@@ -446,6 +452,7 @@ export class Marginer {
       <div class="mg-head">
         <div class="mg-brand">✍️ Marginer <span class="mg-count" data-count></span></div>
         <select class="mg-select" data-view title="Whose notes to show" hidden></select>
+        <button class="mg-tbtn" data-act="auto" hidden>${ICON.bolt}</button>
         <button class="mg-tbtn" data-act="mode" title="Show notes beside the text">${ICON.beside}</button>
         <button class="mg-tbtn" data-act="hl" title="Show/hide highlights">${ICON.eye}</button>
         <button class="mg-tbtn" data-act="collapse" title="Collapse">${ICON.close}</button>
@@ -674,6 +681,7 @@ export class Marginer {
     bar.innerHTML = `
       <div class="mg-brand">✍️ <span class="mg-count" data-count></span></div>
       <select class="mg-select" data-view title="Whose notes to show" hidden></select>
+      <button class="mg-tbtn" data-act="auto" hidden>${ICON.bolt}</button>
       <button class="mg-tbtn" data-act="mode" title="Show notes in a list">${ICON.list}</button>
       <button class="mg-tbtn" data-act="hl" title="Show/hide notes and highlights">${ICON.eye}</button>
       <button class="mg-tbtn" data-act="copy" title="Copy markdown">${ICON.copy}</button>
@@ -691,6 +699,27 @@ export class Marginer {
     }
     for (const root of [this.sidebar, this.bar]) {
       root.querySelector('[data-act="send"]')!.addEventListener('click', () => void this.sendDrafts())
+      root.querySelector('[data-act="auto"]')!.addEventListener('click', () => this.toggleAutoOpen())
+    }
+    this.renderAutoOpen()
+  }
+
+  // Opt this site in (or out): the userscript then opens Marginer on every
+  // page here, not just the ones with notes.
+  private toggleAutoOpen() {
+    const on = !autoOpen()
+    setAutoOpen(on)
+    this.renderAutoOpen()
+    this.toast(on ? `Marginer will open on its own on ${location.hostname}` : `Marginer will stay out of the way on ${location.hostname} (⌘⇧U opens it)`)
+  }
+
+  private renderAutoOpen() {
+    const on = autoOpen()
+    for (const root of [this.sidebar, this.bar]) {
+      const b = root.querySelector('[data-act="auto"]') as HTMLButtonElement
+      b.hidden = !this.autoToggle
+      b.classList.toggle('active', on)
+      b.title = on ? `Opens on its own on ${location.hostname} — click to stop` : `Open on its own on ${location.hostname}`
     }
   }
 

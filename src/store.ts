@@ -84,3 +84,15 @@ export async function saveDoc(md: string, key = pageKey()): Promise<void> {
     /* storage full or blocked -- the in-memory session still works */
   }
 }
+
+// Per-site: should the userscript open Marginer on its own on this site? It
+// lives in the site's own localStorage, which is what the userscript (in the
+// page's context) and the bookmarklet share -- so the unit of opting in is the
+// site, and the choice is visible to both.
+const AUTO_KEY = PREFIX + 'auto-open'
+export function autoOpen(): boolean {
+  try { return localStorage.getItem(AUTO_KEY) === '1' } catch { return false }
+}
+export function setAutoOpen(on: boolean): void {
+  try { if (on) localStorage.setItem(AUTO_KEY, '1'); else localStorage.removeItem(AUTO_KEY) } catch { /* blocked storage */ }
+}
