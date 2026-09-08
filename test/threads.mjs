@@ -221,6 +221,8 @@ await pg.goto(`${origin}/home/post/p-42`, { waitUntil: 'load' })
 await pg.evaluate(bundle)
 await wait(700)
 ok('the reader page finds the same threads (via the canonical link)', await pg.$$eval('.mg-bar [data-view] option', (os) => os.map((o) => o.textContent).join('|')) === 'Your notes|Maria · 5|Ann · 1')
+ok('...and the notes made on the publication page: one post, one document', (await pg.evaluate(() => window.__marginer.markdown())).includes('my own note'))
+ok('the hop-to-publication button stays hidden when it is the same site', await pg.$eval('.mg-bar [data-act="elsewhere"]', (b) => b.hidden))
 
 
 // --- the permalink fallback: no comment on the page -> userscript fills the box --

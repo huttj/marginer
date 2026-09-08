@@ -21,6 +21,10 @@ export type Comment = {
 
 export type Site = {
   name: 'substack'
+  // The post's one true URL (its publication page), whatever page it's being
+  // read on. Notes are keyed by it, so the reader and the publication page
+  // share a document -- within one storage, that is (see store.ts).
+  canonical: string | null
   // The article itself. Comments render on the same page, so a quote must be
   // looked for HERE, or a comment's `> quote` would anchor to its own text.
   article(): Element
@@ -61,6 +65,7 @@ export function detectSite(): Site | null {
   const post = () => `${base}/p/${slug}`
   return {
     name: 'substack',
+    canonical: slug ? post() : null,
     article: () => document.querySelector('.available-content, .body.markup, article') ?? document.body,
     async fetchComments() {
       // The page's own JSON: the post id from the slug (or the slug from the id,

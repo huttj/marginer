@@ -8,8 +8,14 @@ export type Doc = { url: string; title: string; md: string; updated: number }
 const PREFIX = 'marginer:'
 
 // Fragment-only differences are the same page; everything else (query included,
-// since plenty of sites put the real content there) keys separately.
+// since plenty of sites put the real content there) keys separately -- unless
+// a site adapter has named the page's canonical URL, which then stands in for
+// every URL the same post is served at.
+let canonicalKey: string | null = null
+export function setCanonicalKey(url: string | null): void { canonicalKey = url }
+
 export function pageKey(href = location.href): string {
+  if (canonicalKey && href === location.href) return canonicalKey
   try {
     const u = new URL(href)
     u.hash = ''

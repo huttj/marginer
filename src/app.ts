@@ -8,7 +8,7 @@ import { serializeBody, stripWrapper, withFooter } from './export'
 import {
   formatQuoteMarker, hasCommentText, parseSpans, renderMarkdown, serializeResponse, splitLeadingEmojis, type RBlock,
 } from './markdown'
-import { autoOpen, loadDoc, loadPrefs, pageKey, saveDoc, setAutoOpen } from './store'
+import { autoOpen, loadDoc, loadPrefs, pageKey, saveDoc, setAutoOpen, setCanonicalKey } from './store'
 import { syncImageOverlays } from './overlay'
 import { CSS } from './styles'
 
@@ -42,6 +42,8 @@ const ICON = {
   beside: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h9M3 11h9M3 16h6"/><rect x="15" y="8" width="7" height="7" rx="1.5"/></svg>',
   list: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M14 3v18"/></svg>',
   copy: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  // open this post on its own site (from Substack's reader)
+  out: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/></svg>',
   // auto-open on this site (the userscript)
   bolt: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg>',
 }
@@ -159,11 +161,14 @@ export class Marginer {
     this.buildSidebar()
     this.buildBar()
 
+    // Know the site before loading: its canonical URL is the storage key.
+    this.site = detectSite()
+    setCanonicalKey(this.site?.canonical ?? null)
     const stored = await loadDoc()
     this.setMarkdown(stored?.md ?? '')
     this.setOpen(!opts?.collapsed)
-    this.site = detectSite()
     if (this.site) { this.loadDrafts(); void this.loadThreads() }
+    this.renderElsewhere()
 
     this.on(document, 'mouseup', (e: MouseEvent) => this.onMouseUp(e))
     this.on(document, 'touchend', (e: TouchEvent) => this.onMouseUp(e as any), { passive: true })
@@ -452,6 +457,7 @@ export class Marginer {
       <div class="mg-head">
         <div class="mg-brand">✍️ Marginer <span class="mg-count" data-count></span></div>
         <select class="mg-select" data-view title="Whose notes to show" hidden></select>
+        <button class="mg-tbtn" data-act="elsewhere" hidden>${ICON.out}</button>
         <button class="mg-tbtn" data-act="auto" hidden>${ICON.bolt}</button>
         <button class="mg-tbtn" data-act="mode" title="Show notes beside the text">${ICON.beside}</button>
         <button class="mg-tbtn" data-act="hl" title="Show/hide highlights">${ICON.eye}</button>
@@ -681,6 +687,7 @@ export class Marginer {
     bar.innerHTML = `
       <div class="mg-brand">✍️ <span class="mg-count" data-count></span></div>
       <select class="mg-select" data-view title="Whose notes to show" hidden></select>
+      <button class="mg-tbtn" data-act="elsewhere" hidden>${ICON.out}</button>
       <button class="mg-tbtn" data-act="auto" hidden>${ICON.bolt}</button>
       <button class="mg-tbtn" data-act="mode" title="Show notes in a list">${ICON.list}</button>
       <button class="mg-tbtn" data-act="hl" title="Show/hide notes and highlights">${ICON.eye}</button>
@@ -700,8 +707,23 @@ export class Marginer {
     for (const root of [this.sidebar, this.bar]) {
       root.querySelector('[data-act="send"]')!.addEventListener('click', () => void this.sendDrafts())
       root.querySelector('[data-act="auto"]')!.addEventListener('click', () => this.toggleAutoOpen())
+      root.querySelector('[data-act="elsewhere"]')!.addEventListener('click', () => { if (this.site?.canonical) location.href = this.site.canonical })
     }
     this.renderAutoOpen()
+  }
+
+  // Reading a post somewhere other than its own page (Substack's reader): offer
+  // the hop to the publication page, where the site's own storage keeps the
+  // notes made there.
+  private renderElsewhere() {
+    const c = this.site?.canonical
+    let show = false
+    try { show = !!c && new URL(c).origin !== location.origin } catch { /* not a URL */ }
+    for (const root of [this.sidebar, this.bar]) {
+      const b = root.querySelector('[data-act="elsewhere"]') as HTMLButtonElement
+      b.hidden = !show
+      if (show) b.title = `Open this post on ${new URL(c!).hostname}`
+    }
   }
 
   // Opt this site in (or out): the userscript then opens Marginer on every

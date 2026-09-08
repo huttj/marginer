@@ -172,6 +172,12 @@ out of form fields and rich-text editors, where a selection means you're writing
 rather than reading.
 
 Notes are keyed by URL (ignoring the `#fragment`) and come back when you revisit.
+On Substack the key is the post's canonical URL, so the reader page
+(`substack.com/home/post/p-…`) and the publication page are one document — in
+the extension, that is. The bookmarklet and userscript store in the *site's*
+own storage, and `substack.com` and `pub.substack.com` are different sites to
+the browser, so there the reader page gets a ↗ button to hop to the
+publication page, where its notes live.
 A note whose text can no longer be found on the page isn't thrown away — its card
 dims to show the anchor is stale, and it still exports.
 
