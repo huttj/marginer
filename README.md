@@ -186,10 +186,11 @@ moderation and notifications apply, and a hand-typed `> quote` reply counts just
 the same as a Marginer one. The only footprint is the attribution line the
 export ends with, so other readers learn the in-place view exists.
 
-**Replies nest, email-style.** Reply on an entry and the compose panel opens at
-the passage with the note you're answering above it. What gets sent is a
-comment on *that* comment, with the article quote nested one level deeper than
-the note it answers:
+**Replies accumulate, and nest email-style.** Reply on an entry and the pane
+becomes your draft reply to *that* comment, with the passage quoted under the
+note you're answering; reply on another of their notes and it's appended to
+the same draft. Type beneath each. What gets sent is one comment on their
+comment:
 
 ```markdown
 > > the only honest reading anyone ever gives a text
@@ -199,15 +200,17 @@ I don't think it's overstated.
 ```
 
 In any run of `>` lines the deepest level is the article quote (what anchors),
-everything shallower is context. A reply can also quote a fresh passage, and a
-selection made while a thread is up starts a reply to it. Substack's comment
-tree supplies the threading: a thread's entries are shown in tree order,
-grouped by the passage they quote, indented by depth.
+everything shallower is context. A selection made while a thread is up quotes
+a fresh passage into the reply to the thread's author. Replying to two people
+gives two drafts (a switcher appears); drafts persist per page. Substack's
+comment tree supplies the threading: a thread's entries are shown in tree
+order, grouped by the passage they quote, indented by depth.
 
-**Sending goes through the site's own reply box**, never an API: the comment's
-Reply button is pressed and the box pre-filled for you to post; if the comment
-isn't on the page, the text goes on the clipboard and you're taken to its
-permalink, where the userscript (if installed) fills the box on load.
+**Send goes through the site's own reply box**, never an API: the comment's own
+Reply link is pressed (not a child comment's) and its box pre-filled for you
+to post. If the comment isn't on the page, the text goes on the clipboard and
+you're taken to its permalink, where the userscript (if installed) opens that
+comment's box and fills it.
 
 ## Layout
 

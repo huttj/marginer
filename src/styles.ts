@@ -46,6 +46,7 @@ export const CSS = `
   color: var(--mg-fg); font-weight: 400; letter-spacing: normal; text-align: left; text-transform: none;
 }
 [data-mg-ui] button { font: inherit; color: inherit; }
+[data-mg-ui] [hidden], [data-mg-ui][hidden] { display: none !important; }
 
 /* ---- image highlights: the Highlight API paints text only, so a quoted image
        gets a document-anchored box that scrolls with the page ---- */
@@ -185,8 +186,9 @@ export const CSS = `
 .mg-entry-emoji { font-size: 13px; line-height: 1; margin-top: 4px; }
 .mg-entry .mg-btn.tiny { margin-top: 6px; padding: 2px 8px; font-size: 11.5px; }
 .mg-card.mg-foreign .mg-md { display: block; -webkit-line-clamp: unset; }
-.mg-sidebar.mg-foreign .mg-pane { color: var(--mg-muted); }
 .mg-sidebar.mg-foreign .mg-panebar, .mg-sidebar.mg-foreign .mg-hint { display: none; }
+.mg-foot .mg-select { flex: 0 1 auto; }
+.mg-bar .mg-btn.tiny { margin: 0 2px; }
 /* the reply panel: the note being answered, above the box */
 .mg-re {
   font-size: 12.5px; color: var(--mg-muted); margin: 0 0 8px; padding: 4px 8px 4px 10px;

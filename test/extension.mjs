@@ -34,7 +34,7 @@ writeFileSync(join(ext, 'manifest.json'), JSON.stringify({ ...manifest, host_per
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: true,
-  args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--no-sandbox'],
+  args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--no-sandbox', '--disable-frame-rate-limit', '--disable-gpu-vsync'],
 })
 const worker = await browser.waitForTarget((t) => t.type() === 'service_worker', { timeout: 15000 })
 ok('service worker registered', !!worker)

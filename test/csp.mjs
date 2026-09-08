@@ -40,7 +40,9 @@ const server = createServer((req, res) => {
 await new Promise((r) => server.listen(0, '127.0.0.1', r))
 const url = `http://127.0.0.1:${server.address().port}/`
 
-const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] })
+// No vsync: headless Chrome on macOS can wait forever for a display frame (no
+// requestAnimationFrame, no screenshots), and hover throttling rides on rAF.
+const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-frame-rate-limit', '--disable-gpu-vsync'] })
 
 for (const [label, csp, expected] of POLICIES) {
   policy = csp

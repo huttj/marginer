@@ -32,7 +32,7 @@ document.addEventListener('keydown', (e) => {
 })
 
 async function boot() {
-  completePendingReply() // a reply that came here via a comment permalink
+  void completePendingReply() // a reply that came here via a comment permalink
   const doc = await loadDoc()
   if (!doc?.md?.trim()) return // no notes here — stay out of the way entirely
   await summon(true)

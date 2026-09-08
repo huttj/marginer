@@ -10,7 +10,9 @@ const CHROME = readdirSync(base).sort().map((b) => join(base, b, rel)).filter(ex
 const bundle = readFileSync(join(root, 'dist/marginer.js'), 'utf8')
 const dark = process.argv.includes('--dark')
 
-const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] })
+// No vsync: headless Chrome on macOS can wait forever for a display frame (no
+// requestAnimationFrame, no screenshots), and hover throttling rides on rAF.
+const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-frame-rate-limit', '--disable-gpu-vsync'] })
 const page = await browser.newPage()
 await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: dark ? 'dark' : 'light' }])
 await page.setViewport({ width: 1400, height: 900, deviceScaleFactor: 2 })
