@@ -1,0 +1,90 @@
+// The embeddable build: boots from Marginer.init() with a custom storage
+// adapter and a read-only author layer, on the demo page for it.
+import puppeteer from 'puppeteer-core'
+import { existsSync, readdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const root = join(__dirname, '..')
+const base = `${process.env.HOME}/.cache/puppeteer/chrome`
+const rel = 'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+const CHROME = readdirSync(base).sort().map((b) => join(base, b, rel)).filter(existsSync).pop()
+if (!CHROME) throw new Error('No Chrome for Testing found under ' + base)
+
+const fails = []
+const ok = (name, cond, extra = '') => {
+  console.log(`${cond ? '  ok  ' : ' FAIL '} ${name}${cond ? '' : '  ← ' + extra}`)
+  if (!cond) fails.push(name)
+}
+const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-frame-rate-limit', '--disable-gpu-vsync'] })
+const page = await browser.newPage()
+await page.setViewport({ width: 1280, height: 900 })
+const errs = []
+page.on('pageerror', (e) => errs.push(String(e)))
+page.on('console', (m) => { if (m.type() === 'error') errs.push('console: ' + m.text()) })
+const click = async (sel) => {
+  const h = await page.$(sel); if (!h) throw new Error('no element for ' + sel)
+  await h.evaluate((el) => el.scrollIntoView({ block: 'center' }))
+  const b = await h.boundingBox(); await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2); await wait(150)
+}
+const select = (text) => page.evaluate((text) => {
+  const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let n
+  while ((n = w.nextNode())) { const i = n.data.indexOf(text); if (i < 0) continue
+    const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + text.length)
+    const s = getSelection(); s.removeAllRanges(); s.addRange(r)
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); return true }
+  return false
+}, text)
+
+await page.goto('file://' + join(root, 'demo/embed.html'), { waitUntil: 'load' })
+await wait(400)
+
+ok('Marginer.init is the global the classic script exposes', await page.evaluate(() => typeof Marginer.init === 'function' && !!window.__marginer))
+ok('boots into view mode', await page.$eval('.mg-bar', (e) => e.style.display) === '')
+ok('the author layer paints in its own highlight', await page.evaluate(() => CSS.highlights.get('marginer-layer')?.size) === 2)
+ok('...and nothing is painted as the reader\'s own yet', await page.evaluate(() => !CSS.highlights.get('marginer')))
+const cards = await page.$$eval('.mg-beside .mg-card.mg-layer', (cs) => cs.map((c) => ({
+  quote: c.querySelector('.mg-quote').textContent.trim(),
+  who: c.querySelector('.mg-who b').textContent,
+  text: c.querySelector('.mg-md')?.textContent.trim() ?? '',
+  emoji: c.querySelector('.mg-entry-emoji')?.textContent ?? '',
+  reply: !!c.querySelector('[data-reply]'), x: !!c.querySelector('.mg-cardx'), link: !!c.querySelector('.mg-who a'),
+})))
+ok('the layer\'s notes are cards in the gutter, labelled', cards.length === 2 && cards.every((c) => c.who === 'Author'), JSON.stringify(cards))
+ok('a reaction shows as a reaction', cards.some((c) => c.quote.startsWith('only honest') && c.emoji === '🔥' && c.text.startsWith('An author note')), JSON.stringify(cards))
+ok('layer cards are read-only: no Reply, no ✕, no permalink', cards.every((c) => !c.reply && !c.x && !c.link), JSON.stringify(cards))
+ok('the count is the reader\'s notes, not the layer\'s', await page.$eval('.mg-bar [data-count]', (e) => e.textContent) === '')
+ok('the picker stays hidden (no site threads)', await page.$eval('.mg-bar [data-view]', (e) => e.hidden))
+
+// The reader annotates on top of the layer.
+ok('a passage was selected', await select('argument in miniature'))
+await wait(200)
+await page.$eval('.mg-compose textarea', (e) => e.focus())
+await page.keyboard.type('a visitor note')
+await click('.mg-compose [data-act="save"]')
+await wait(700) // saveQuiet is debounced 500ms
+ok('the note went through the custom adapter', (await page.evaluate(() => [...window.demoStorage.memory.values()].join('\n'))).includes('a visitor note'))
+ok('the layer was NOT written into the reader\'s document', !(await page.evaluate(() => [...window.demoStorage.memory.values()].join('\n'))).includes('author note'))
+ok('markdown() is the reader\'s own', (await page.evaluate(() => window.__marginer.markdown())).trim() === '> argument in miniature\n\na visitor note')
+ok('both paint at once', await page.evaluate(() => CSS.highlights.get('marginer')?.size === 1 && CSS.highlights.get('marginer-layer')?.size === 2))
+ok('the count is now 1', await page.$eval('.mg-bar [data-count]', (e) => e.textContent) === '1')
+
+// The pane (list mode) shows only the reader's document; the layer stays on the page.
+await click('.mg-bar [data-act="mode"]')
+ok('the pane holds the reader\'s document alone', await page.$eval('.mg-pane', (e) => e.value.trim()) === '> argument in miniature\n\na visitor note')
+ok('the layer still paints with the sidebar open', await page.evaluate(() => CSS.highlights.get('marginer-layer')?.size) === 2)
+
+// A second init replaces the first; destroy() leaves nothing behind.
+await page.evaluate(() => { Marginer.init({ storage: { loadDoc: () => null, saveDoc: () => {} } }); })
+await wait(300)
+ok('a second init() replaces the first (one bar, no layer)', await page.$$eval('.mg-bar', (b) => b.length) === 1 && await page.evaluate(() => !CSS.highlights.get('marginer-layer')))
+await page.evaluate(() => window.__marginer.destroy())
+ok('destroy() removes every node', await page.$$eval('[data-mg-ui]', (n) => n.length) === 0)
+
+ok('no page errors', errs.length === 0, errs.join(' | '))
+await browser.close()
+if (fails.length) { console.log(`\n${fails.length} failed`); process.exit(1) }
+console.log('\nall passed')

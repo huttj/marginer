@@ -6,7 +6,7 @@ import { buildThreads, detectSite, fillTextarea, groupByAnchor, PENDING_KEY, typ
 import { buildEmojiPanel, refreshEmojiPanel } from './emoji'
 import { serializeBody, stripWrapper, withFooter } from './export'
 import {
-  formatQuoteMarker, hasCommentText, parseSpans, renderMarkdown, serializeResponse, splitLeadingEmojis, type RBlock,
+  formatQuoteMarker, hasCommentText, parseResponse, parseSpans, renderMarkdown, serializeResponse, splitLeadingEmojis, type RBlock,
 } from './markdown'
 import { autoOpen, loadDoc, loadPrefs, pageKey, saveDoc, setAutoOpen, setCanonicalKey } from './store'
 import { syncImageOverlays } from './overlay'
@@ -28,9 +28,22 @@ type Block = {
   // Someone else's: the entries (from the page's comments) quoting this passage,
   // in thread order. Read-only on the page; each can be replied to.
   thread?: Entry[]
+  // ...or from an extra layer handed to init() -- the site's own notes, say.
+  // Rendered like a thread, but never editable, never replied to, never saved.
+  layer?: Layer
 }
 
+// A read-only set of notes shown alongside the reader's own: `doc` is a
+// Marginer markdown document (`> quote` / note blocks), `label` is who it is
+// from. An embedding site uses this to publish the author's marginalia.
+export type Layer = { id: string; label: string; doc: string; readOnly?: boolean }
+
+// What init() takes. `key` overrides the page's storage key (a site that knows
+// its own canonical slug); `site: false` skips the Substack detection.
+export type InitOptions = { collapsed?: boolean; autoOpenToggle?: boolean; layers?: Layer[]; key?: string | null; site?: boolean }
+
 const HL = typeof (globalThis as any).Highlight !== 'undefined' && !!(window as any).CSS?.highlights
+const HL_NAMES = ['marginer', 'marginer-layer', 'marginer-active', 'marginer-draft']
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 const ICON = {
@@ -89,6 +102,7 @@ export class Marginer {
   // Other readers' annotations, read from the page's own comments.
   private site: Site | null = null
   private threads: Thread[] = []
+  private layers: Layer[] = []            // read-only notes shown with yours (see Layer)
   private view: 'mine' | string = 'mine'  // 'mine' or a thread's root comment id
   private mine: { md: string; blocks: Block[]; preamble: string; spans: { start: number; reply: number; end: number }[] } | null = null
   // Replies being written: each is a block addressed to one comment, edited in
@@ -136,8 +150,9 @@ export class Marginer {
   // knows): highlights and the pill only, notes on hover.
   // `autoOpenToggle` offers the per-site "open on its own" switch -- only the
   // userscript can honour it, so only the userscript asks for it.
-  async init(opts?: { collapsed?: boolean; autoOpenToggle?: boolean }) {
+  async init(opts?: InitOptions) {
     this.autoToggle = !!opts?.autoOpenToggle
+    this.layers = opts?.layers ?? []
     this.styleEl = document.createElement('style')
     this.styleEl.setAttribute('data-mg-ui', '')
     this.styleEl.textContent = CSS
@@ -162,8 +177,8 @@ export class Marginer {
     this.buildBar()
 
     // Know the site before loading: its canonical URL is the storage key.
-    this.site = detectSite()
-    setCanonicalKey(this.site?.canonical ?? null)
+    this.site = opts?.site === false ? null : detectSite()
+    setCanonicalKey(opts?.key ?? this.site?.canonical ?? null)
     const stored = await loadDoc()
     this.setMarkdown(stored?.md ?? '')
     this.setOpen(!opts?.collapsed)
@@ -203,7 +218,7 @@ export class Marginer {
     this.mo?.disconnect()
     for (const b of this.bound) b.t.removeEventListener(b.k, b.f, b.o)
     this.bound = []
-    if (HL) for (const n of ['marginer', 'marginer-active', 'marginer-draft']) (window as any).CSS.highlights.delete(n)
+    if (HL) for (const n of HL_NAMES) (window as any).CSS.highlights.delete(n)
     this.reserve('')
     document.documentElement.removeAttribute('data-mg-theme')
     document.querySelectorAll('[data-mg-ui]').forEach((n) => n.remove())
@@ -246,9 +261,31 @@ export class Marginer {
     const { preamble, blocks, spans } = parseSpans(this.md)
     this.preamble = preamble
     this.spans = spans
-    this.blocks = blocks.map((b, i) => this.resolve(b, i))
+    // Yours first, so blocks[i] lines up with spans[i]; the layers' after.
+    this.blocks = blocks.map((b, i) => this.resolve(b, i)).concat(this.layerBlocks())
     this.gutterCache = null // the page may have changed under us (that's why we re-anchor)
     this.renderAll()
+  }
+
+  // The extra layers as blocks: one per quoted passage, every entry quoting it
+  // grouped on it, exactly as a comment thread is. Re-resolved with the rest.
+  private layerBlocks(): Block[] {
+    const out: Block[] = []
+    this.layers.forEach((layer, li) => {
+      const entries: Entry[] = []
+      parseResponse(stripWrapper(layer.doc ?? '')).blocks.forEach((block, k) => {
+        if (!block.quotes.length) return
+        entries.push({ commentId: `${layer.id}:${k}`, author: layer.label, date: '', permalink: '', depth: 0, block })
+      })
+      groupByAnchor(entries).forEach((group, i) => {
+        const b = this.resolve(group[0].block, i)
+        b.id = `l${li}.${i}`
+        b.thread = group
+        b.layer = layer
+        out.push(b)
+      })
+    })
+    return out
   }
 
   // `root` is where the quotes are looked for: the whole page for your own
@@ -283,7 +320,7 @@ export class Marginer {
   // no naming inside it, and the export pastes clean. (Older documents carrying a
   // `[Title](url)` header still load: stripWrapper() drops it.)
   private serialize(): string {
-    const rb: RBlock[] = this.blocks.map((b) => ({ quotes: b.quotes, nths: b.nths, note: b.note }))
+    const rb: RBlock[] = this.blocks.filter((b) => !b.layer).map((b) => ({ quotes: b.quotes, nths: b.nths, note: b.note }))
     return this.preamble ? serializeResponse(this.preamble, rb) : serializeBody(rb)
   }
 
@@ -371,11 +408,14 @@ export class Marginer {
     const reg = (window as any).CSS.highlights
     const H = (globalThis as any).Highlight
     if (!this.highlightsOn) {
-      for (const n of ['marginer', 'marginer-active', 'marginer-draft']) reg.delete(n)
+      for (const n of HL_NAMES) reg.delete(n)
       return
     }
-    const ranges = this.blocks.flatMap((b) => b.ranges)
+    // Layers paint in their own colour, so the site's notes and yours read apart.
+    const ranges = this.blocks.filter((b) => !b.layer).flatMap((b) => b.ranges)
     if (ranges.length) reg.set('marginer', new H(...ranges)); else reg.delete('marginer')
+    const layered = this.blocks.filter((b) => b.layer).flatMap((b) => b.ranges)
+    if (layered.length) reg.set('marginer-layer', new H(...layered)); else reg.delete('marginer-layer')
 
     // Once grafted it paints as a real highlight, so the dotted draft comes off.
     const draft = this.composeGrafted ? [] : (this.composeBlock?.ranges ?? [])
@@ -581,7 +621,7 @@ export class Marginer {
     const { preamble, blocks, spans } = parseSpans(this.md)
     this.preamble = preamble
     this.spans = spans
-    this.blocks = blocks.map((b, i) => this.resolve(b, i))
+    this.blocks = blocks.map((b, i) => this.resolve(b, i)).concat(this.layerBlocks())
     this.onPaneCaret()
     this.renderHighlights()
     this.renderMarginChips()
@@ -664,7 +704,7 @@ export class Marginer {
   }
 
   private renderCounts() {
-    const n = this.blocks.length
+    const n = this.blocks.filter((b) => !b.layer).length // yours; a layer's are the page's
     for (const root of [this.sidebar, this.bar]) {
       (root.querySelector('[data-count]') as HTMLElement).textContent = n ? String(n) : ''
       const hlBtn = root.querySelector('[data-act="hl"]') as HTMLElement
@@ -1192,6 +1232,7 @@ export class Marginer {
       // Someone else's: every entry quoting this passage, in thread order, each
       // with a Reply. Read-only on the page.
       card.classList.add('mg-foreign')
+      if (blk.layer) card.classList.add('mg-layer')
       const anchorKey = `${blk.nths[0] ?? 1}:${blk.quotes.join(' | ')}`
       const mine = this.drafts.filter((d) => `${d.nths[0] ?? 1}:${d.quotes.join(' | ')}` === anchorKey)
       const thread = this.currentThread()
@@ -1199,10 +1240,10 @@ export class Marginer {
         const { emojis, text } = splitLeadingEmojis(e.block.note)
         const under = thread ? mine.filter((d) => d.entryKey === this.entryKey(thread, e)) : []
         return `<div class="mg-entry" style="margin-left:${Math.min(e.depth, 4) * 12}px" data-entry="${i}">
-          <div class="mg-who"><b>${esc(e.author)}</b> <a href="${esc(e.permalink)}" title="This comment on the page">↗</a></div>
+          <div class="mg-who"><b>${esc(e.author)}</b>${e.permalink ? ` <a href="${esc(e.permalink)}" title="This comment on the page">↗</a>` : ''}</div>
           ${text.trim() ? `<div class="mg-md">${renderMarkdown(text)}</div>` : ''}
           ${emojis.length ? `<div class="mg-entry-emoji">${emojis.map((x) => esc(x)).join(' ')}</div>` : ''}
-          ${under.length ? under.map((d) => this.draftHtml(d)).join('') : `<button class="mg-btn tiny ghost" data-reply="${i}">Reply</button>`}
+          ${blk.layer ? '' : under.length ? under.map((d) => this.draftHtml(d)).join('') : `<button class="mg-btn tiny ghost" data-reply="${i}">Reply</button>`}
         </div>`
       }).join('')
       const fresh = mine.filter((d) => !d.entryKey).map((d) => this.draftHtml(d)).join('')
@@ -1326,15 +1367,16 @@ export class Marginer {
   // Clicking it (or the highlight) brings view mode back with the note open.
   private renderPeek() {
     this.peekEl.innerHTML = ''
-    if (this.open || !this.highlightsOn) return
     const blk = this.blockById(this.hovered)
+    // Open in list mode, a layer's note has no card and isn't in the pane: peek it.
+    if (!this.highlightsOn || (this.open && !(blk?.layer && this.layout() === 'list'))) return
     const line = blk && this.firstLine(blk)
     if (!blk || !line || (!blk.thread && !hasCommentText(blk.text))) return // a bare reaction: the chip says it all
     const card = this.buildCard(blk)
     card.querySelector('.mg-cardx')?.remove() // read-only glance; edit in the pane
     this.peekEl.appendChild(card)
     const colRight = this.columnRight(blk.ranges[0])
-    const vw = document.documentElement.clientWidth
+    const vw = document.documentElement.clientWidth - (this.open ? this.sidebar.offsetWidth : 0)
     if (vw - colRight >= GUTTER) {
       card.style.width = `${CARD_W}px`
       card.style.left = `${window.scrollX + colRight + GUTTER_GAP}px`
@@ -1639,7 +1681,7 @@ export class Marginer {
     const f = document.createElement('button')
     f.className = 'mg-fab'
     f.setAttribute('data-mg-ui', '')
-    const n = this.blocks.length
+    const n = this.blocks.filter((b) => !b.layer).length
     f.innerHTML = `✍️ <span data-fabcount>${n || 0}</span>`
     f.title = n ? `${n} note${n === 1 ? '' : 's'} on this page — click to open` : 'Open Marginer'
     f.addEventListener('click', () => this.setOpen(true))

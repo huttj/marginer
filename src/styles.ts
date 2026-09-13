@@ -34,6 +34,8 @@ export const CSS = `
 /* Translucent so it reads on any page background, light or dark. */
 ::highlight(marginer) { background-color: rgba(255, 196, 64, 0.34); }
 ::highlight(marginer-active) { background-color: rgba(255, 178, 43, 0.62); }
+/* An extra layer (the site's own notes): a cooler tint, so it reads apart from yours. */
+::highlight(marginer-layer) { background-color: rgba(96, 165, 250, 0.30); }
 /* The pending selection, until it's committed. */
 ::highlight(marginer-draft) {
   background-color: rgba(255, 196, 64, 0.30);
@@ -186,6 +188,7 @@ export const CSS = `
 .mg-entry-emoji { font-size: 13px; line-height: 1; margin-top: 4px; }
 .mg-entry .mg-btn.tiny { margin-top: 6px; padding: 2px 8px; font-size: 11.5px; }
 .mg-card.mg-foreign .mg-md { display: block; -webkit-line-clamp: unset; }
+.mg-card.mg-layer { border-left: 3px solid rgba(96, 165, 250, .8); }
 .mg-sidebar.mg-foreign .mg-panebar, .mg-sidebar.mg-foreign .mg-hint { display: none; }
 .mg-foot .mg-select { flex: 0 1 auto; }
 .mg-bar .mg-btn.tiny { margin: 0 2px; }

@@ -85,10 +85,38 @@ const userscript = {
   }],
 }
 
+// 3. The embeddable build, for a site's own pages: an ES module for bundlers
+//    and Astro `<script>` tags, and a classic script that parks `Marginer` on
+//    window. Neither runs anything on load: the page calls Marginer.init().
+const embedReport = (file) => ({
+  name: 'report',
+  setup(build) {
+    build.onEnd((r) => {
+      if (r.errors.length) return
+      console.log(`→ ${file.padEnd(24)} ${kb(readFileSync(file, 'utf8').length)}`)
+    })
+  },
+})
+const embedEsm = {
+  ...common,
+  format: 'esm',
+  entryPoints: ['src/embed.ts'],
+  outfile: 'dist/marginer-embed.esm.js',
+  plugins: [embedReport('dist/marginer-embed.esm.js')],
+}
+const embedIife = {
+  ...common,
+  format: 'iife',
+  globalName: 'Marginer',
+  entryPoints: ['src/embed.ts'],
+  outfile: 'dist/marginer-embed.js',
+  plugins: [embedReport('dist/marginer-embed.js')],
+}
 
+const targets = [core, userscript, embedEsm, embedIife]
 if (watch) {
-  for (const opts of [core, userscript]) { const ctx = await esbuild.context(opts); await ctx.watch() }
+  for (const opts of targets) { const ctx = await esbuild.context(opts); await ctx.watch() }
   console.log('watching…')
 } else {
-  for (const opts of [core, userscript]) await esbuild.build(opts)
+  for (const opts of targets) await esbuild.build(opts)
 }

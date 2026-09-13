@@ -1,0 +1,48 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Marginer embed demo — On Marginalia</title>
+<style>
+  body { font: 17px/1.7 Georgia, serif; max-width: 40rem; margin: 3rem auto; padding: 0 1.5rem; color: #222; }
+  h1 { font-size: 1.9rem; }
+  .hint { font: 14px/1.6 system-ui, sans-serif; color: #777; border-left: 3px solid #ddd; padding-left: 1rem; }
+</style>
+<h1>On Marginalia</h1>
+<p class="hint">The embeddable build. The author's notes are the blue highlights; select any
+passage to add your own (they are kept in memory here, and logged to the console).</p>
+<p>Coleridge filled the margins of borrowed books with such vigour that friends
+lent him volumes <em>hoping</em> he would deface them. The note in the margin is a
+strange literary form: private, parasitic on someone else's argument, and yet
+often the only honest reading anyone ever gives a text.</p>
+<p>A highlight without a note is a bookmark. A note without a highlight is a
+diary. The pair together is an <strong>argument in miniature</strong> — this bit,
+and what I think about this bit — which is exactly the shape of a good code review
+comment, a good editorial note, and a good disagreement.</p>
+<p>The trouble with digital reading was never that we stopped annotating. It was
+that our annotations stopped being <em>portable</em>. They live inside one reader,
+one app, one account. Marginalia that can't leave the page is marginalia that
+dies with the page.</p>
+<p>So the output format matters more than the input gesture. Markdown travels:
+into a pull request, an email, an issue, a document. The point is not the
+highlight. The point is what you can paste afterwards.</p>
+
+<script src="../dist/marginer-embed.js"></script>
+<script>
+  // A stand-in for a site's API: keeps the document in memory and logs every
+  // call, so the console shows what a real adapter would be asked to do.
+  const memory = new Map()
+  const storage = {
+    loadDoc(key) { console.log('[demo] loadDoc', key); return memory.get(key) ?? null },
+    saveDoc(key, md) { console.log('[demo] saveDoc', key, JSON.stringify(md)); memory.set(key, md) },
+  }
+  window.demoStorage = { memory }
+  Marginer.init({
+    storage,
+    layers: [{
+      id: 'author',
+      label: 'Author',
+      doc: '> only honest reading anyone ever gives a text\n\n🔥 An author note: overstated on purpose.\n\n\n> Markdown travels\n\n👍 This is the part I actually believe.',
+      readOnly: true,
+    }],
+    onSave: (md) => console.log('[demo] onSave', md.length, 'chars'),
+  })
+</script>
