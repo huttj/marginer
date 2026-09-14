@@ -32,6 +32,7 @@ export type EmbedOptions = {
   pane?: boolean
   narrowCards?: boolean
   reserve?: boolean
+  cards?: 'gutter' | 'inline'
   // The page's storage key. Default: its URL without the fragment.
   key?: string
   // Called with the page's markdown after every save (a hook for analytics,
@@ -65,7 +66,7 @@ export function init(options: EmbedOptions = {}): Marginer | null {
   setStorage(withHook(options.storage ?? defaultStorage, options.onSave))
   const m = new Marginer()
   window.__marginer = m
-  m.init({ collapsed: options.collapsed, mode: options.mode, pane: options.pane, narrowCards: options.narrowCards, reserve: options.reserve, layers: options.layers, key: options.key ?? null, site: false })
+  m.init({ collapsed: options.collapsed, mode: options.mode, pane: options.pane, narrowCards: options.narrowCards, reserve: options.reserve, cards: options.cards, layers: options.layers, key: options.key ?? null, site: false })
     .catch((e) => console.error('[marginer] init failed', e))
   return m
 }

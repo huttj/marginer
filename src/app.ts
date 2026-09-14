@@ -50,6 +50,9 @@ export type InitOptions = {
   narrowCards?: boolean
   // false: never claim page margin for the gutter; cards sit in whatever space the page has.
   reserve?: boolean
+  // 'inline': cards always sit under their highlight (hover to peek, click to
+  // pin, click again or elsewhere to put away) rather than beside the text.
+  cards?: 'gutter' | 'inline'
 }
 
 const HL = typeof (globalThis as any).Highlight !== 'undefined' && !!(window as any).CSS?.highlights
@@ -123,6 +126,7 @@ export class Marginer {
   private pane = true               // false: cards only, the list is never offered
   private narrowCards = false // keep cards (under the text) on narrow screens even with the pane available
   private reserveOk = true    // may we push the page over to make a gutter?
+  private cardsInline = false // cards under the highlight at every width
   // Cards under the text (no gutter): only the focused one shows, and it opens
   // as a read view first -- this is the block whose card has been tapped into
   // editing. Kept separately so a tap on a highlight doesn't raise the keyboard.
@@ -177,6 +181,7 @@ export class Marginer {
     this.pane = opts?.pane !== false
     this.narrowCards = !!opts?.narrowCards
     this.reserveOk = opts?.reserve !== false
+    this.cardsInline = opts?.cards === 'inline'
     this.mode = this.pane ? (opts?.mode ?? this.mode) : 'beside'
     this.styleEl = document.createElement('style')
     this.styleEl.setAttribute('data-mg-ui', '')
@@ -1110,7 +1115,7 @@ export class Marginer {
   // narrow for a gutter (only reachable with the pane off).
   // Cards go under the text when the screen is narrow, or when we may not
   // push the page over and there's no room beside the column anyway.
-  private inline = () => this.layout() === 'beside' && (window.innerWidth <= NARROW || (!this.reserveOk && this.narrowGutter()))
+  private inline = () => this.layout() === 'beside' && (this.cardsInline || window.innerWidth <= NARROW || (!this.reserveOk && this.narrowGutter()))
   private narrowGutter(): boolean {
     let right = 0
     for (const b of this.blocks) if (b.ranges.length) right = Math.max(right, this.columnRight(b.ranges[0]))
