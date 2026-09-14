@@ -7,8 +7,9 @@
   .hint { font: 14px/1.6 system-ui, sans-serif; color: #777; border-left: 3px solid #ddd; padding-left: 1rem; }
 </style>
 <h1>On Marginalia</h1>
-<p class="hint">The embeddable build. The author's notes are the blue highlights; select any
-passage to add your own (they are kept in memory here, and logged to the console).</p>
+<p class="hint">The embeddable build, cards only. The author's notes are the blue highlights; select any
+passage to add your own (they are kept in memory here, and logged to the console). Narrow the
+window and the cards move under the text: tap a highlight to show its card, tap again to put it away.</p>
 <p>Coleridge filled the margins of borrowed books with such vigour that friends
 lent him volumes <em>hoping</em> he would deface them. The note in the margin is a
 strange literary form: private, parasitic on someone else's argument, and yet
@@ -34,15 +35,19 @@ highlight. The point is what you can paste afterwards.</p>
     loadDoc(key) { console.log('[demo] loadDoc', key); return memory.get(key) ?? null },
     saveDoc(key, md) { console.log('[demo] saveDoc', key, JSON.stringify(md)); memory.set(key, md) },
   }
+  const layers = [{
+    id: 'author',
+    label: 'Author',
+    doc: '> only honest reading anyone ever gives a text\n\n🔥 An author note: overstated on purpose.\n\n\n> Markdown travels\n\n👍 This is the part I actually believe.',
+    readOnly: true,
+  }]
   window.demoStorage = { memory }
+  window.demoLayers = layers
   Marginer.init({
     storage,
-    layers: [{
-      id: 'author',
-      label: 'Author',
-      doc: '> only honest reading anyone ever gives a text\n\n🔥 An author note: overstated on purpose.\n\n\n> Markdown travels\n\n👍 This is the part I actually believe.',
-      readOnly: true,
-    }],
+    mode: 'beside',
+    pane: false,
+    layers,
     onSave: (md) => console.log('[demo] onSave', md.length, 'chars'),
   })
 </script>

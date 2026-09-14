@@ -39,8 +39,14 @@ type Block = {
 export type Layer = { id: string; label: string; doc: string; readOnly?: boolean }
 
 // What init() takes. `key` overrides the page's storage key (a site that knows
-// its own canonical slug); `site: false` skips the Substack detection.
-export type InitOptions = { collapsed?: boolean; autoOpenToggle?: boolean; layers?: Layer[]; key?: string | null; site?: boolean }
+// its own canonical slug); `site: false` skips the Substack detection. `mode`
+// picks the initial view (cards beside the text, or the list). `pane: false`
+// is the cards-only experience: the markdown pane is never offered, so cards
+// stay beside the text even on a narrow screen (where they sit under it).
+export type InitOptions = {
+  collapsed?: boolean; autoOpenToggle?: boolean; layers?: Layer[]; key?: string | null; site?: boolean
+  mode?: Mode; pane?: boolean
+}
 
 const HL = typeof (globalThis as any).Highlight !== 'undefined' && !!(window as any).CSS?.highlights
 const HL_NAMES = ['marginer', 'marginer-layer', 'marginer-active', 'marginer-draft']
@@ -69,7 +75,7 @@ const GUTTER_GAP = 20
 const GUTTER = CARD_W + GUTTER_GAP + 14
 const NARROW = 720 // below this the sidebar docks to the bottom and there is no gutter
 
-type Mode = 'list' | 'beside'
+export type Mode = 'list' | 'beside'
 
 // A reply in progress: which comment it goes to, the passage, the words it
 // answers (`re`), and the reply. `entryKey` names the thread entry it sits
@@ -110,6 +116,15 @@ export class Marginer {
   private drafts: Draft[] = []
   private reserved = ''             // the html margin we're currently claiming
   private autoToggle = false
+  private pane = true               // false: cards only, the list is never offered
+  // Cards under the text (no gutter): only the focused one shows, and it opens
+  // as a read view first -- this is the block whose card has been tapped into
+  // editing. Kept separately so a tap on a highlight doesn't raise the keyboard.
+  private inlineEdit: string | null = null
+  private wasInline = false
+  // The highlight whose card was just put away under the text: the pointer is
+  // still on it, so its hover peek stays quiet until the pointer leaves.
+  private peekMuted: string | null = null
 
   private styleEl!: HTMLStyleElement
   private layer!: HTMLElement       // document-anchored: margin chips + image boxes
@@ -153,6 +168,8 @@ export class Marginer {
   async init(opts?: InitOptions) {
     this.autoToggle = !!opts?.autoOpenToggle
     this.layers = opts?.layers ?? []
+    this.pane = opts?.pane !== false
+    this.mode = this.pane ? (opts?.mode ?? this.mode) : 'beside'
     this.styleEl = document.createElement('style')
     this.styleEl.setAttribute('data-mg-ui', '')
     this.styleEl.textContent = CSS
@@ -175,6 +192,8 @@ export class Marginer {
     this.layer.appendChild(this.peekEl)
     this.buildSidebar()
     this.buildBar()
+    if (!this.pane) (this.bar.querySelector('[data-act="mode"]') as HTMLElement).hidden = true
+    this.wasInline = this.inline()
 
     // Know the site before loading: its canonical URL is the storage key.
     this.site = opts?.site === false ? null : detectSite()
@@ -192,7 +211,13 @@ export class Marginer {
     this.on(document, 'click', (e: MouseEvent) => this.onClickHighlight(e))
     this.on(document, 'mousemove', (e: MouseEvent) => this.onMouseMove(e), { passive: true })
     this.on(document, 'keydown', (e: KeyboardEvent) => this.onKeyDown(e), true)
-    this.on(window, 'resize', () => { this.gutterCache = null; this.queueRelayout() }, { passive: true })
+    this.on(window, 'resize', () => {
+      this.gutterCache = null
+      // Crossing the narrow breakpoint changes WHICH cards exist, not just where.
+      const inline = this.inline()
+      if (inline !== this.wasInline) { this.wasInline = inline; this.renderAll() }
+      this.queueRelayout()
+    }, { passive: true })
     this.on(window, 'scroll', () => this.queueRelayout(), { passive: true })
 
     // Pages that lazy-load or hydrate can replace the nodes our Ranges point at.
@@ -367,6 +392,17 @@ export class Marginer {
     for (const r of Array.from(b.ranges[0].getClientRects())) if (r.width) return r
     const rect = b.ranges[0].getBoundingClientRect()
     return rect.width || rect.height ? rect : null
+  }
+
+  // The last line box a highlight occupies (viewport coords): the bottom-most
+  // box with width across all its pieces, which is what a card sitting UNDER the
+  // highlight hangs from.
+  private lastLine(b: Block): DOMRect | null {
+    let last: DOMRect | null = null
+    for (const r of b.ranges) for (const rc of Array.from(r.getClientRects())) if (rc.width && (!last || rc.bottom > last.bottom)) last = rc
+    if (last) return last
+    const rect = b.ranges[0]?.getBoundingClientRect()
+    return rect && (rect.width || rect.height) ? rect : null
   }
 
   // The y a chip is centered on: the middle of the whole highlight -- one line,
@@ -1055,8 +1091,14 @@ export class Marginer {
   }
 
   // Below the narrow breakpoint there is no gutter to put cards in, so view
-  // mode falls back to the (bottom-docked) list until the window grows again.
-  private layout(): Mode { return window.innerWidth <= NARROW ? 'list' : this.mode }
+  // mode falls back to the (bottom-docked) list until the window grows again --
+  // unless the list is off the table (`pane: false`), in which case the cards
+  // go under the text instead (see layoutBeside).
+  private layout(): Mode { return this.pane && window.innerWidth <= NARROW ? 'list' : this.mode }
+
+  // Cards under the text rather than beside it: view mode on a screen too
+  // narrow for a gutter (only reachable with the pane off).
+  private inline = () => this.layout() === 'beside' && window.innerWidth <= NARROW
 
   // Show whichever chrome the state calls for, and claim the page margin it
   // needs. The sidebar SQUEEZES the page rather than covering it: an html
@@ -1086,6 +1128,7 @@ export class Marginer {
   }
 
   setMode(mode: Mode) {
+    if (mode === 'list' && !this.pane) return // cards only: there is no list to go to
     if (this.mode === mode) return
     this.mode = mode
     this.applyChrome()
@@ -1110,10 +1153,13 @@ export class Marginer {
     if (this.layout() !== 'beside') return
     // A reaction with no comment is already on the page as a margin chip; its
     // card only shows while it's being edited (click the highlight).
-    const shown = list.filter((b) => b.thread || hasCommentText(b.text) || b.id === this.focused)
-    if (!shown.length) { this.reserve(''); return } // nothing to make room for
+    // Under the text (no gutter) only the focused card shows -- one at a time,
+    // so the page stays readable; the rest are a tap on their highlight away.
+    const shown = list.filter((b) => this.inline() ? b.id === this.focused : b.thread || hasCommentText(b.text) || b.id === this.focused)
+    if (!shown.length) { this.reserve(''); if (this.inline()) this.renderPeek(); return } // nothing to make room for
     for (const blk of shown) this.besideEl.appendChild(this.buildCard(blk))
     this.layoutBeside()
+    if (this.inline()) this.renderPeek() // the hovered card may just have become the focused one, or vice versa
     if (draftFocus) {
       const ta = this.besideEl.querySelector(`textarea[data-draft-id="${draftFocus.id}"]`) as HTMLTextAreaElement | null
       if (ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(draftFocus.sel, draftFocus.sel) }
@@ -1184,6 +1230,19 @@ export class Marginer {
     if (this.layout() !== 'beside' || !this.open || !this.highlightsOn) return
     const cards = Array.from(this.besideEl.children).filter((c) => c.classList.contains('mg-card')) as HTMLElement[]
     if (!cards.length) { this.reserve(''); return }
+    if (this.inline()) {
+      // No gutter: each card sits under its highlight, the width of the text
+      // column, later ones stacking below earlier ones. Nothing is reserved --
+      // the page keeps its own margins and the card overlays the lines that follow.
+      this.reserve('')
+      let y = -Infinity
+      for (const el of cards) {
+        const blk = this.blockById(el.dataset.blockId ?? null)
+        el.classList.add('mg-inline')
+        y = blk ? this.placeInline(el, blk, y) : y
+      }
+      return
+    }
     const { x, w } = this.gutter()
     const GAP = 14 // room for the reactions hanging off a card's bottom edge
     const items = cards.map((el) => {
@@ -1208,6 +1267,22 @@ export class Marginer {
       it.el.style.top = `${top[i]}px`
       requestAnimationFrame(() => it.el.classList.add('mg-settled')) // animate moves, not arrival
     })
+  }
+
+  // Put a card under its highlight: left and width from the text column, top
+  // just below the highlight's last line (never above `minTop`, so a stack of
+  // them never overlaps). Returns the card's bottom, for the next one.
+  private placeInline(el: HTMLElement, blk: Block, minTop: number): number {
+    const last = this.lastLine(blk)
+    if (!last) { el.style.display = 'none'; return minTop } // an orphan has nowhere to hang from
+    const vw = document.documentElement.clientWidth
+    const left = this.columnLeft(blk.ranges[0])
+    const w = Math.max(160, Math.min(this.columnRight(blk.ranges[0]) - left, vw - 24))
+    el.style.left = `${window.scrollX + Math.max(12, Math.min(left, vw - 12 - w))}px`
+    el.style.width = `${w}px`
+    const top = Math.max(window.scrollY + last.bottom + 6, minTop)
+    el.style.top = `${top}px`
+    return top + el.offsetHeight + 8
   }
 
   // Written as a method so TypeScript doesn't narrow `cardEditor` to `undefined`
@@ -1258,14 +1333,20 @@ export class Marginer {
       card.addEventListener('mouseleave', () => this.setHovered(null))
       return card
     }
-    if (!focused) {
+    // Under the text, a focused card opens as a read view (delete button and
+    // all) and becomes the editor when tapped -- a tap on the highlight alone
+    // shouldn't raise the keyboard.
+    const editing = focused && (!this.inline() || this.inlineEdit === blk.id)
+    if (!editing) {
       const noteHtml = hasCommentText(blk.text)
         ? `<div class="mg-md">${renderMarkdown(blk.text)}</div>`
         : `<div class="mg-md mg-muted">Add a note…</div>`
       const emojiHtml = blk.emojis.length
         ? `<div class="mg-card-emoji">${blk.emojis.map((e) => `<span>${esc(e)}</span>`).join('')}</div>` : ''
       card.innerHTML = quoteHtml + `<div class="mg-note">${noteHtml}</div>` + emojiHtml
-      card.addEventListener('click', () => this.focus(blk.id, true))
+      card.addEventListener('click', () => {
+        if (focused) { this.inlineEdit = blk.id; this.renderCards() } else this.focus(blk.id, true)
+      })
     } else {
       card.innerHTML = quoteHtml +
         `<div class="mg-note"><textarea data-note rows="3" placeholder="Add a note… (emoji at the front become margin chips)"></textarea></div>
@@ -1342,9 +1423,23 @@ export class Marginer {
     this.closeCompose(false)
     this.focused = id
     this.cardEditor = undefined
+    this.inlineEdit = null
     this.renderAll()
     const blk = this.blockById(id)
     if (scroll && blk?.ranges.length) this.scrollToRange(blk.ranges[0])
+  }
+
+  // Under the text, the focused card is the only one showing: put it away.
+  private unfocus() {
+    this.inlineEdit = null
+    // Put away by a tap on its own highlight, the pointer is still on it (a tap
+    // leaves a hover behind), which would peek the card straight back: not
+    // until the pointer has moved off (setHovered lifts the mute).
+    this.peekMuted = this.hovered === this.focused ? this.focused : null
+    const blk = this.blockById(this.focused)
+    if (this.cardEditor && blk) { this.commitCard(blk, this.cardEditor); return } // save() drops the focus
+    this.focused = null
+    this.renderAll()
   }
 
   private scrollToRange(r: Range) {
@@ -1356,6 +1451,7 @@ export class Marginer {
   private setHovered(id: string | null) {
     if (this.hovered === id) return
     this.hovered = id
+    if (id !== this.peekMuted) this.peekMuted = null
     document.querySelectorAll<HTMLElement>('[data-mg-ui][data-block-id]').forEach((el) =>
       el.classList.toggle('mg-emph', el.dataset.blockId === id))
     this.renderHighlights()
@@ -1369,12 +1465,15 @@ export class Marginer {
     this.peekEl.innerHTML = ''
     const blk = this.blockById(this.hovered)
     // Open in list mode, a layer's note has no card and isn't in the pane: peek it.
-    if (!this.highlightsOn || (this.open && !(blk?.layer && this.layout() === 'list'))) return
+    // Open with the cards under the text, only the focused card shows: peek the others.
+    const inline = this.open && this.inline() && blk?.id !== this.focused && blk?.id !== this.peekMuted
+    if (!this.highlightsOn || (this.open && !inline && !(blk?.layer && this.layout() === 'list'))) return
     const line = blk && this.firstLine(blk)
     if (!blk || !line || (!blk.thread && !hasCommentText(blk.text))) return // a bare reaction: the chip says it all
     const card = this.buildCard(blk)
     card.querySelector('.mg-cardx')?.remove() // read-only glance; edit in the pane
     this.peekEl.appendChild(card)
+    if (inline) { card.classList.add('mg-inline'); this.placeInline(card, blk, -Infinity); return }
     const colRight = this.columnRight(blk.ranges[0])
     const vw = document.documentElement.clientWidth - (this.open ? this.sidebar.offsetWidth : 0)
     if (vw - colRight >= GUTTER) {
@@ -1602,6 +1701,13 @@ export class Marginer {
     // editors, which autosave) -- but an untouched panel is simply dropped.
     if (this.compose) { this.closeCompose(false); return }
     if (this.pendingQuote) { this.dropPendingQuote(); return }
+    // Under the text, the showing card goes away on a tap anywhere -- on its own
+    // highlight too, where the click that follows must not bring it straight back.
+    if (this.focused && this.open && this.inline()) {
+      this.skipClick = this.blockAt(e.clientX, e.clientY) === this.focused
+      this.unfocus()
+      return
+    }
     if (this.cardEditor && this.focused) {
       const blk = this.blockById(this.focused)
       if (blk) this.commitCard(blk, this.cardEditor)
@@ -1637,8 +1743,11 @@ export class Marginer {
   // A plain click on a highlight brings its note back up to edit: the card
   // opens in the sidebar, or pins itself beside the text in view mode. A drag
   // that ended here is a selection, not a click, and is left to offerNote().
+  private skipClick = false
   private onClickHighlight(e: MouseEvent) {
-    if (!this.highlightsOn || e.altKey || e.button !== 0) return
+    const skip = this.skipClick
+    this.skipClick = false
+    if (skip || !this.highlightsOn || e.altKey || e.button !== 0) return
     if ((e.target as HTMLElement)?.closest?.('[data-mg-ui]')) return
     const sel = window.getSelection()
     if (sel && !sel.isCollapsed) return

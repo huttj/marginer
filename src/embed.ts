@@ -9,10 +9,10 @@
 // Nothing here touches the DOM at import time, so it is safe to import from
 // code that also runs on the server (Astro, say): init() is a no-op there.
 
-import { Marginer, type Layer } from './app'
+import { Marginer, type Layer, type Mode } from './app'
 import { defaultStorage, setStorage, type Prefs, type StorageAdapter } from './store'
 
-export type { Layer, Prefs, StorageAdapter }
+export type { Layer, Mode, Prefs, StorageAdapter }
 export { Marginer }
 
 export type EmbedOptions = {
@@ -22,6 +22,14 @@ export type EmbedOptions = {
   layers?: Layer[]
   // Boot as a passive indicator: highlights and the pill, notes on hover.
   collapsed?: boolean
+  // The initial view: 'beside' (cards floating next to the text; the default)
+  // or 'list' (the sidebar with the markdown pane).
+  mode?: Mode
+  // false: cards only. The markdown pane is never offered (the bar loses its
+  // list button), and on a screen too narrow for a gutter the cards sit under
+  // their highlights, one at a time, instead of falling back to the pane.
+  // Default true.
+  pane?: boolean
   // The page's storage key. Default: its URL without the fragment.
   key?: string
   // Called with the page's markdown after every save (a hook for analytics,
@@ -55,7 +63,7 @@ export function init(options: EmbedOptions = {}): Marginer | null {
   setStorage(withHook(options.storage ?? defaultStorage, options.onSave))
   const m = new Marginer()
   window.__marginer = m
-  m.init({ collapsed: options.collapsed, layers: options.layers, key: options.key ?? null, site: false })
+  m.init({ collapsed: options.collapsed, mode: options.mode, pane: options.pane, layers: options.layers, key: options.key ?? null, site: false })
     .catch((e) => console.error('[marginer] init failed', e))
   return m
 }
