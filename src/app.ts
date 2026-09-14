@@ -1315,12 +1315,17 @@ export class Marginer {
     const last = this.lastLine(blk)
     if (!last) { el.style.display = 'none'; return minTop } // an orphan has nowhere to hang from
     const vw = document.documentElement.clientWidth
-    const left = this.columnLeft(blk.ranges[0])
-    const w = Math.max(160, Math.min(this.columnRight(blk.ranges[0]) - left, vw - 24))
-    el.style.left = `${window.scrollX + Math.max(12, Math.min(left, vw - 12 - w))}px`
+    const colLeft = this.columnLeft(blk.ranges[0])
+    const w = Math.max(160, Math.min(this.columnRight(blk.ranges[0]) - colLeft, vw - 24))
     // As wide as its contents, up to the column: a one-word note is a small card.
     el.style.width = 'max-content'
     el.style.maxWidth = `${w}px`
+    // Centred under the highlight's last line, kept inside the column and the viewport.
+    const cw = el.offsetWidth
+    const centre = last.left + last.width / 2
+    const lo = Math.max(12, colLeft), hi = Math.min(vw - 12, colLeft + w)
+    const left = Math.max(lo, Math.min(centre - cw / 2, hi - cw))
+    el.style.left = `${window.scrollX + left}px`
     const top = Math.max(window.scrollY + last.bottom + 6, minTop)
     el.style.top = `${top}px`
     return top + el.offsetHeight + 8
