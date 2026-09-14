@@ -1298,7 +1298,9 @@ export class Marginer {
     const left = this.columnLeft(blk.ranges[0])
     const w = Math.max(160, Math.min(this.columnRight(blk.ranges[0]) - left, vw - 24))
     el.style.left = `${window.scrollX + Math.max(12, Math.min(left, vw - 12 - w))}px`
-    el.style.width = `${w}px`
+    // As wide as its contents, up to the column: a one-word note is a small card.
+    el.style.width = 'max-content'
+    el.style.maxWidth = `${w}px`
     const top = Math.max(window.scrollY + last.bottom + 6, minTop)
     el.style.top = `${top}px`
     return top + el.offsetHeight + 8

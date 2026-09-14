@@ -224,7 +224,8 @@ export const CSS = `
 .mg-beside .mg-card.focused, .mg-beside .mg-card:hover { z-index: 2147483644; box-shadow: var(--mg-shadow); }
 /* No gutter (a narrow screen, cards only): the card sits under its highlight,
    over the lines that follow, so it needs a real shadow to read as a layer. */
-.mg-beside .mg-card.mg-inline { box-shadow: var(--mg-shadow); z-index: 2147483644; }
+.mg-beside .mg-card.mg-inline { box-shadow: var(--mg-shadow); z-index: 2147483644; min-width: 12rem; }
+.mg-beside .mg-card.mg-inline .mg-quote { white-space: normal; }
 
 /* view-mode toolbar: the sidebar's head, as a pill where the collapsed one sits */
 .mg-bar {
