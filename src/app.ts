@@ -117,6 +117,7 @@ export class Marginer {
   private reserved = ''             // the html margin we're currently claiming
   private autoToggle = false
   private pane = true               // false: cards only, the list is never offered
+  private narrowCards = false // keep cards (under the text) on narrow screens even with the pane available
   // Cards under the text (no gutter): only the focused one shows, and it opens
   // as a read view first -- this is the block whose card has been tapped into
   // editing. Kept separately so a tap on a highlight doesn't raise the keyboard.
@@ -169,6 +170,7 @@ export class Marginer {
     this.autoToggle = !!opts?.autoOpenToggle
     this.layers = opts?.layers ?? []
     this.pane = opts?.pane !== false
+    this.narrowCards = !!opts?.narrowCards
     this.mode = this.pane ? (opts?.mode ?? this.mode) : 'beside'
     this.styleEl = document.createElement('style')
     this.styleEl.setAttribute('data-mg-ui', '')
@@ -1094,7 +1096,7 @@ export class Marginer {
   // mode falls back to the (bottom-docked) list until the window grows again --
   // unless the list is off the table (`pane: false`), in which case the cards
   // go under the text instead (see layoutBeside).
-  private layout(): Mode { return this.pane && window.innerWidth <= NARROW ? 'list' : this.mode }
+  private layout(): Mode { return this.pane && !this.narrowCards && window.innerWidth <= NARROW ? 'list' : this.mode }
 
   // Cards under the text rather than beside it: view mode on a screen too
   // narrow for a gutter (only reachable with the pane off).
