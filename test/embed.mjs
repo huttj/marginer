@@ -50,7 +50,7 @@ const cards = await page.$$eval('.mg-beside .mg-card.mg-layer', (cs) => cs.map((
   quote: c.querySelector('.mg-quote').textContent.trim(),
   who: c.querySelector('.mg-who b').textContent,
   text: c.querySelector('.mg-md')?.textContent.trim() ?? '',
-  emoji: c.querySelector('.mg-entry-emoji')?.textContent ?? '',
+  emoji: c.querySelector('.mg-card-emoji')?.textContent ?? '',
   reply: !!c.querySelector('[data-reply]'), x: !!c.querySelector('.mg-cardx'), link: !!c.querySelector('.mg-who a'),
 })))
 ok('the layer\'s notes are cards in the gutter, labelled', cards.length === 2 && cards.every((c) => c.who === 'Author'), JSON.stringify(cards))
