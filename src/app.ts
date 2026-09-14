@@ -1106,7 +1106,14 @@ export class Marginer {
 
   // Cards under the text rather than beside it: view mode on a screen too
   // narrow for a gutter (only reachable with the pane off).
-  private inline = () => this.layout() === 'beside' && window.innerWidth <= NARROW
+  // Cards go under the text when the screen is narrow, or when we may not
+  // push the page over and there's no room beside the column anyway.
+  private inline = () => this.layout() === 'beside' && (window.innerWidth <= NARROW || (!this.reserveOk && this.narrowGutter()))
+  private narrowGutter(): boolean {
+    let right = 0
+    for (const b of this.blocks) if (b.ranges.length) right = Math.max(right, this.columnRight(b.ranges[0]))
+    return !!right && document.documentElement.clientWidth - right < 230
+  }
 
   // Show whichever chrome the state calls for, and claim the page margin it
   // needs. The sidebar SQUEEZES the page rather than covering it: an html
