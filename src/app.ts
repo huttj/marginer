@@ -1338,12 +1338,13 @@ export class Marginer {
         return `<div class="mg-entry" style="margin-left:${Math.min(e.depth, 4) * 12}px" data-entry="${i}">
           <div class="mg-who"><b>${esc(e.author)}</b>${e.permalink ? ` <a href="${esc(e.permalink)}" title="This comment on the page">↗</a>` : ''}</div>
           ${text.trim() ? `<div class="mg-md">${renderMarkdown(text)}</div>` : ''}
+          ${emojis.length && !blk.layer ? `<div class="mg-entry-emoji">${emojis.map((x) => esc(x)).join(' ')}</div>` : ''}
           ${blk.layer ? '' : under.length ? under.map((d) => this.draftHtml(d)).join('') : `<button class="mg-btn tiny ghost" data-reply="${i}">Reply</button>`}
         </div>`
       }).join('')
       const fresh = mine.filter((d) => !d.entryKey).map((d) => this.draftHtml(d)).join('')
       // Reactions hang off the bottom edge, lined up, the same as on the reader's own cards.
-      const allEmoji = blk.thread.flatMap((e) => splitLeadingEmojis(e.block.note).emojis)
+      const allEmoji = blk.layer ? blk.thread.flatMap((e) => splitLeadingEmojis(e.block.note).emojis) : []
       const emojiHtml = allEmoji.length ? `<div class="mg-card-emoji">${allEmoji.map((x) => `<span>${esc(x)}</span>`).join('')}</div>` : ''
       card.innerHTML = quoteHtml + `<div class="mg-thread">${entriesHtml}${fresh}</div>` + emojiHtml
       card.querySelectorAll<HTMLElement>('[data-reply]').forEach((b) => b.addEventListener('click', (ev) => {
