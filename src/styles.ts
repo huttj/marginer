@@ -178,6 +178,8 @@ export const CSS = `
   cursor: pointer;
 }
 .mg-select:hover { background: var(--mg-chip-hover); }
+.mg-who-top { padding: 10px 12px 0; font-size: 12.5px; color: var(--mg-muted); }
+.mg-who-top + .mg-quote, .mg-who-top + .mg-quote-img { margin-top: 6px; }
 .mg-thread { padding: 0 12px 10px; display: flex; flex-direction: column; gap: 8px; }
 .mg-entry { position: relative; padding-left: 8px; border-left: 2px solid var(--mg-border); }
 .mg-entry:first-child { padding-left: 0; border-left: none; }

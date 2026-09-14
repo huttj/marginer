@@ -1356,7 +1356,7 @@ export class Marginer {
         const { emojis, text } = splitLeadingEmojis(e.block.note)
         const under = thread ? mine.filter((d) => d.entryKey === this.entryKey(thread, e)) : []
         return `<div class="mg-entry" style="margin-left:${Math.min(e.depth, 4) * 12}px" data-entry="${i}">
-          <div class="mg-who"><b>${esc(e.author)}</b>${e.permalink ? ` <a href="${esc(e.permalink)}" title="This comment on the page">↗</a>` : ''}</div>
+          ${blk.layer ? '' : `<div class="mg-who"><b>${esc(e.author)}</b>${e.permalink ? ` <a href="${esc(e.permalink)}" title="This comment on the page">↗</a>` : ''}</div>`}
           ${text.trim() ? `<div class="mg-md">${renderMarkdown(text)}</div>` : ''}
           ${emojis.length && !blk.layer ? `<div class="mg-entry-emoji">${emojis.map((x) => esc(x)).join(' ')}</div>` : ''}
           ${blk.layer ? '' : under.length ? under.map((d) => this.draftHtml(d)).join('') : `<button class="mg-btn tiny ghost" data-reply="${i}">Reply</button>`}
@@ -1366,7 +1366,10 @@ export class Marginer {
       // Reactions hang off the bottom edge, lined up, the same as on the reader's own cards.
       const allEmoji = blk.layer ? blk.thread.flatMap((e) => splitLeadingEmojis(e.block.note).emojis) : []
       const emojiHtml = allEmoji.length ? `<div class="mg-card-emoji">${allEmoji.map((x) => `<span>${esc(x)}</span>`).join('')}</div>` : ''
-      card.innerHTML = quoteHtml + `<div class="mg-thread">${entriesHtml}${fresh}</div>` + emojiHtml
+      // A layer card belongs to one reader: their name goes above the quote, so
+      // the quote reads as what they marked, not as part of what they wrote.
+      const whoTop = blk.layer ? `<div class="mg-who mg-who-top"><b>${esc(blk.thread[0]?.author ?? '')}</b></div>` : ''
+      card.innerHTML = whoTop + quoteHtml + `<div class="mg-thread">${entriesHtml}${fresh}</div>` + emojiHtml
       card.querySelectorAll<HTMLElement>('[data-reply]').forEach((b) => b.addEventListener('click', (ev) => {
         ev.stopPropagation()
         this.openReply(blk, blk.thread![Number(b.dataset.reply)])
@@ -1442,6 +1445,27 @@ export class Marginer {
     // A note emptied of everything -- prose and emoji alike -- is a deletion.
     if (!blk.note.trim()) this.blocks = this.blocks.filter((b) => b !== blk)
     void this.save()
+  }
+
+  // ---- a small public surface for the embedding site ----------------------
+
+  /** The notes on the page in document order, optionally only one layer's. */
+  notes(layerId?: string): { id: string; layer: string | null; quote: string }[] {
+    return this.ordered()
+      .filter((b) => (layerId ? b.layer?.id === layerId : true))
+      .map((b) => ({ id: b.id, layer: b.layer?.id ?? null, quote: b.quotes[0] ?? '' }))
+  }
+
+  /** Scroll a note's highlight into view and open its card. */
+  goTo(id: string) {
+    const b = this.blockById(id)
+    if (!b) return
+    const r = b.ranges[0]
+    if (r) {
+      const rect = r.getBoundingClientRect()
+      window.scrollBy({ top: rect.top - window.innerHeight * 0.4, behavior: 'smooth' })
+    }
+    this.focus(id, false)
   }
 
   private focus(id: string, scroll: boolean) {
