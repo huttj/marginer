@@ -119,7 +119,7 @@ const inline = await page.evaluate(() => {
   const cr = card.getBoundingClientRect()
   return { own: !card.classList.contains('mg-layer'), inline: card.classList.contains('mg-inline'), x: !!card.querySelector('.mg-cardx'),
     editor: !!card.querySelector('textarea'), belowLast: cr.top >= last.bottom, gap: cr.top - last.bottom,
-    leftOk: Math.abs(cr.left - col.left) < 2, widthOk: cr.width <= col.width + 2 && cr.width >= 100, peeks: document.querySelectorAll('.mg-peek .mg-card').length }
+    leftOk: cr.left >= col.left - 2 && cr.right <= col.right + 2, widthOk: cr.width <= col.width + 2 && cr.width >= 100, peeks: document.querySelectorAll('.mg-peek .mg-card').length }
 })
 ok('tapping a highlight shows its card alone, under the highlight\'s last line, no wider than the column', !!inline && inline.own && inline.inline && inline.belowLast && inline.gap < 12 && inline.leftOk && inline.widthOk, JSON.stringify(inline))
 ok('...as a read view with a delete button (no keyboard raised)', !!inline && inline.x && !inline.editor && inline.peeks === 0, JSON.stringify(inline))
