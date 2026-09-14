@@ -512,6 +512,8 @@ export class Marginer {
       // In view mode the right of the column is where the cards are, and the
       // card carries the reactions anyway.
       if (onRight && this.layout() === 'beside' && this.open) continue
+      // The expanded card carries the reactions itself; its chip would only be decoration.
+      if (this.focused === blk.id && this.layout() === 'beside' && this.open) continue
       const stack = document.createElement('div')
       const emph = this.hovered === blk.id || this.focused === blk.id
       stack.className = `mg-emote-stack${onRight ? ' right' : ''}${emph ? ' mg-emph' : ''}`
