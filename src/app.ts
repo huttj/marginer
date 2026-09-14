@@ -46,6 +46,10 @@ export type Layer = { id: string; label: string; doc: string; readOnly?: boolean
 export type InitOptions = {
   collapsed?: boolean; autoOpenToggle?: boolean; layers?: Layer[]; key?: string | null; site?: boolean
   mode?: Mode; pane?: boolean
+  // true (default): fall back to the list on narrow screens. false: keep cards under the text there.
+  narrowCards?: boolean
+  // false: never claim page margin for the gutter; cards sit in whatever space the page has.
+  reserve?: boolean
 }
 
 const HL = typeof (globalThis as any).Highlight !== 'undefined' && !!(window as any).CSS?.highlights
@@ -118,6 +122,7 @@ export class Marginer {
   private autoToggle = false
   private pane = true               // false: cards only, the list is never offered
   private narrowCards = false // keep cards (under the text) on narrow screens even with the pane available
+  private reserveOk = true    // may we push the page over to make a gutter?
   // Cards under the text (no gutter): only the focused one shows, and it opens
   // as a read view first -- this is the block whose card has been tapped into
   // editing. Kept separately so a tap on a highlight doesn't raise the keyboard.
@@ -171,6 +176,7 @@ export class Marginer {
     this.layers = opts?.layers ?? []
     this.pane = opts?.pane !== false
     this.narrowCards = !!opts?.narrowCards
+    this.reserveOk = opts?.reserve !== false
     this.mode = this.pane ? (opts?.mode ?? this.mode) : 'beside'
     this.styleEl = document.createElement('style')
     this.styleEl.setAttribute('data-mg-ui', '')
@@ -1123,6 +1129,7 @@ export class Marginer {
   }
 
   private reserve(margin: string) {
+    if (!this.reserveOk) margin = ''
     if (margin === this.reserved) return
     this.reserved = margin
     const s = document.documentElement.style
@@ -1229,7 +1236,8 @@ export class Marginer {
   // pinned exactly to its highlight and pushes its neighbours out of the way,
   // above and below, the way Google Docs does it.
   private layoutBeside() {
-    if (this.layout() !== 'beside' || !this.open || !this.highlightsOn) return
+    if (this.layout() !== 'beside' || !this.open) return
+    if (!this.highlightsOn) { this.reserve(''); return } // hidden notes claim no margin
     const cards = Array.from(this.besideEl.children).filter((c) => c.classList.contains('mg-card')) as HTMLElement[]
     if (!cards.length) { this.reserve(''); return }
     if (this.inline()) {
