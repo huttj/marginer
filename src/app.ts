@@ -507,32 +507,47 @@ export class Marginer {
   private renderMarginChips() {
     this.layer.querySelectorAll('.mg-emote-stack').forEach((n) => n.remove())
     if (!this.highlightsOn || window.innerWidth <= NARROW) return
-    let bottom = 0
+    // Notes that share a line share a cluster, so their emoji sit in a row
+    // rather than stacking down the margin.
+    type Item = { blk: Block; center: number; colLeft: number; onRight: boolean }
+    const items: Item[] = []
     for (const blk of this.ordered()) {
       if (!blk.emojis.length) continue
       const line = this.firstLine(blk)
       if (!line) continue
       const colLeft = this.columnLeft(blk.ranges[0])
       const onRight = colLeft < 34
-      // In view mode the right of the column is where the cards are, and the
-      // card carries the reactions anyway.
       if (onRight && this.layout() === 'beside' && this.open) continue
       // The expanded card carries the reactions itself; its chip would only be decoration.
       if (this.focused === blk.id && this.layout() === 'beside' && this.open) continue
+      items.push({ blk, center: this.highlightCenter(blk) ?? this.lineCenter1(line), colLeft, onRight })
+    }
+    const groups: Item[][] = []
+    for (const it of items) {
+      const g = groups.find((g) => g[0].onRight === it.onRight && Math.abs(g[0].center - it.center) < 10)
+      if (g) g.push(it); else groups.push([it])
+    }
+    let bottom = 0
+    for (const g of groups) {
+      const { onRight, colLeft, center } = g[0]
       const stack = document.createElement('div')
-      const emph = this.hovered === blk.id || this.focused === blk.id
+      const emph = g.some((it) => this.hovered === it.blk.id || this.focused === it.blk.id)
       stack.className = `mg-emote-stack${onRight ? ' right' : ''}${emph ? ' mg-emph' : ''}`
       stack.setAttribute('data-mg-ui', '')
-      stack.dataset.blockId = blk.id
-      stack.innerHTML = blk.emojis.slice().reverse().map((e) => `<span class="mg-emote">${esc(e)}</span>`).join('')
-      stack.title = hasCommentText(blk.text) ? blk.text.slice(0, 120) : 'Reaction'
-      stack.addEventListener('mouseenter', () => this.setHovered(blk.id))
-      stack.addEventListener('mouseleave', () => this.setHovered(null))
-      stack.addEventListener('click', () => this.focus(blk.id, false))
+      stack.dataset.blockId = g[0].blk.id
+      // Right edge pinned, so the cluster grows leftward: later notes' emoji come first in the DOM.
+      const spans = g.flatMap((it) => it.blk.emojis.map((e) => ({ e, it }))).reverse()
+      stack.innerHTML = spans.map(({ e, it }) => `<span class="mg-emote" data-block="${it.blk.id}" title="${esc(hasCommentText(it.blk.text) ? it.blk.text.slice(0, 120) : 'Reaction')}">${esc(e)}</span>`).join('')
+      for (const el of Array.from(stack.querySelectorAll<HTMLElement>('.mg-emote'))) {
+        const id = el.dataset.block!
+        el.addEventListener('mouseenter', () => this.setHovered(id))
+        el.addEventListener('mouseleave', () => this.setHovered(null))
+        el.addEventListener('click', (e) => { e.stopPropagation(); this.focus(id, false) })
+      }
       this.layer.appendChild(stack)
       const h = stack.offsetHeight
-      const top = Math.max(window.scrollY + (this.highlightCenter(blk) ?? this.lineCenter1(line)) - h / 2, bottom + 6)
-      stack.style.left = `${window.scrollX + (onRight ? this.columnRight(blk.ranges[0]) + 8 : colLeft - 8)}px`
+      const top = Math.max(window.scrollY + center - h / 2, bottom + 6)
+      stack.style.left = `${window.scrollX + (onRight ? this.columnRight(g[0].blk.ranges[0]) + 8 : colLeft - 8)}px`
       stack.style.top = `${top}px`
       bottom = top + h
     }
