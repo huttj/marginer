@@ -46,6 +46,10 @@ export type Layer = { id: string; label: string; doc: string; readOnly?: boolean
 export type InitOptions = {
   collapsed?: boolean; autoOpenToggle?: boolean; layers?: Layer[]; key?: string | null; site?: boolean
   mode?: Mode; pane?: boolean
+  // true: closed means off. No highlights, chips or peeks, and selecting text
+  // is just selecting text, until the reader opens it again. Default false
+  // (closed is a passive indicator: highlights stay, notes peek on hover).
+  offWhenClosed?: boolean
   // true (default): fall back to the list on narrow screens. false: keep cards under the text there.
   narrowCards?: boolean
   // false: never claim page margin for the gutter; cards sit in whatever space the page has.
@@ -98,6 +102,12 @@ type Draft = {
   note: string
 }
 
+// While a modal <dialog> is up the page behind it is inert, our UI included, so a
+// selection made there (a drag across a lightbox, say) is not a note in the making.
+function modalUp(): boolean {
+  try { return !!document.querySelector('dialog:modal') } catch { return false }
+}
+
 export class Marginer {
   private md = ''
   private blocks: Block[] = []
@@ -105,6 +115,10 @@ export class Marginer {
   private hovered: string | null = null
   private highlightsOn = true
   private open = true
+  private offWhenClosed = false
+  // Whether the annotation layer is live: painted, hoverable, and taking
+  // selections. The eye hides it; so does closing, when the site asks for that.
+  private get active() { return this.highlightsOn && (this.open || !this.offWhenClosed) }
   // 'list': the sidebar. 'beside': cards float in the page's right gutter,
   // level with their highlights, Google-Docs style.
   // Boots in view mode: the notes are visible on the page from the start, and
@@ -177,6 +191,7 @@ export class Marginer {
   // userscript can honour it, so only the userscript asks for it.
   async init(opts?: InitOptions) {
     this.autoToggle = !!opts?.autoOpenToggle
+    this.offWhenClosed = !!opts?.offWhenClosed
     this.layers = opts?.layers ?? []
     this.pane = opts?.pane !== false
     this.narrowCards = !!opts?.narrowCards
@@ -456,7 +471,7 @@ export class Marginer {
     if (!HL) return
     const reg = (window as any).CSS.highlights
     const H = (globalThis as any).Highlight
-    if (!this.highlightsOn) {
+    if (!this.active) {
       for (const n of HL_NAMES) reg.delete(n)
       return
     }
@@ -475,7 +490,7 @@ export class Marginer {
   }
 
   private renderImageOverlays() {
-    if (!this.highlightsOn) { syncImageOverlays(this.layer, []); return }
+    if (!this.active) { syncImageOverlays(this.layer, []); return }
     const activeId = this.hovered ?? this.focused
     const items: { img: HTMLImageElement; variant?: string }[] = []
     for (const b of this.blocks) for (const img of b.imgs) items.push({ img, variant: b.id === activeId ? 'active' : undefined })
@@ -506,7 +521,7 @@ export class Marginer {
   // right of the line instead.
   private renderMarginChips() {
     this.layer.querySelectorAll('.mg-emote-stack').forEach((n) => n.remove())
-    if (!this.highlightsOn || window.innerWidth <= NARROW) return
+    if (!this.active || window.innerWidth <= NARROW) return
     // Notes that share a line share a cluster, so their emoji sit in a row
     // rather than stacking down the margin.
     type Item = { blk: Block; center: number; colLeft: number; onRight: boolean }
@@ -1540,7 +1555,7 @@ export class Marginer {
     // Open in list mode, a layer's note has no card and isn't in the pane: peek it.
     // Open with the cards under the text, only the focused card shows: peek the others.
     const inline = this.open && this.inline() && blk?.id !== this.focused && blk?.id !== this.peekMuted
-    if (!this.highlightsOn || (this.open && !inline && !(blk?.layer && this.layout() === 'list'))) return
+    if (!this.active || (this.open && !inline && !(blk?.layer && this.layout() === 'list'))) return
     const line = blk && this.firstLine(blk)
     if (!blk || !line || (!blk.thread && !hasCommentText(blk.text))) return // a bare reaction: the chip says it all
     const card = this.buildCard(blk)
@@ -1574,7 +1589,7 @@ export class Marginer {
   // clicking a word) opens it too, so the panel has to cost nothing to ignore:
   // click away with it empty and it leaves no highlight behind.
   private offerNote() {
-    if (!this.highlightsOn) return
+    if (!this.active || modalUp()) return
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !sel.rangeCount) return
     const range = sel.getRangeAt(0)
@@ -1605,7 +1620,7 @@ export class Marginer {
   // Alt/Option-click an image to annotate it on its own. A plain click is left
   // alone so links, lightboxes and galleries keep working.
   private onAltClickImage(e: MouseEvent) {
-    if (!e.altKey || !this.highlightsOn) return
+    if (!e.altKey || !this.active || modalUp()) return
     const t = e.target as HTMLElement
     if (t?.tagName !== 'IMG' || t.closest('[data-mg-ui]')) return
     e.preventDefault(); e.stopPropagation()
@@ -1794,7 +1809,7 @@ export class Marginer {
     const { clientX: x, clientY: y } = e
     requestAnimationFrame(() => {
       this.hoverRaf = false
-      if (!this.highlightsOn) return
+      if (!this.active) return
       if ((e.target as HTMLElement)?.closest?.('[data-mg-ui]')) return
       this.setHovered(this.blockAt(x, y))
     })
@@ -1820,7 +1835,7 @@ export class Marginer {
   private onClickHighlight(e: MouseEvent) {
     const skip = this.skipClick
     this.skipClick = false
-    if (skip || !this.highlightsOn || e.altKey || e.button !== 0) return
+    if (skip || !this.active || e.altKey || e.button !== 0) return
     if ((e.target as HTMLElement)?.closest?.('[data-mg-ui]')) return
     const sel = window.getSelection()
     if (sel && !sel.isCollapsed) return
@@ -1831,6 +1846,7 @@ export class Marginer {
   private onKeyDown(e: KeyboardEvent) {
     // ⌘/Ctrl + Shift + H: annotate the current selection without reaching for the mouse.
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'H' || e.key === 'h')) {
+      if (!this.active || modalUp()) return
       const sel = window.getSelection()
       if (sel && !sel.isCollapsed && sel.rangeCount && sel.toString().trim()) {
         e.preventDefault()
@@ -1858,6 +1874,12 @@ export class Marginer {
     this.fab?.remove(); this.fab = undefined
     this.peekEl.innerHTML = ''
     this.applyChrome()
+    if (this.offWhenClosed) {
+      // Closing puts the whole layer away: highlights off the page, and a note in
+      // progress is kept the way a click-away keeps it, not dropped.
+      if (!open) { this.closeCompose(false); this.hovered = null }
+      this.renderAll()
+    }
     this.queueRelayout()  // the page just reflowed around (or back over) the sidebar
     if (open) return
     const f = document.createElement('button')

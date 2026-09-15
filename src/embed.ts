@@ -22,6 +22,9 @@ export type EmbedOptions = {
   layers?: Layer[]
   // Boot as a passive indicator: highlights and the pill, notes on hover.
   collapsed?: boolean
+  // Closed means off: no highlights or peeks, and selecting is just selecting,
+  // until the reader opens it again from the ✍️ button. Default false.
+  offWhenClosed?: boolean
   // The initial view: 'beside' (cards floating next to the text; the default)
   // or 'list' (the sidebar with the markdown pane).
   mode?: Mode
@@ -66,7 +69,7 @@ export function init(options: EmbedOptions = {}): Marginer | null {
   setStorage(withHook(options.storage ?? defaultStorage, options.onSave))
   const m = new Marginer()
   window.__marginer = m
-  m.init({ collapsed: options.collapsed, mode: options.mode, pane: options.pane, narrowCards: options.narrowCards, reserve: options.reserve, cards: options.cards, layers: options.layers, key: options.key ?? null, site: false })
+  m.init({ collapsed: options.collapsed, offWhenClosed: options.offWhenClosed, mode: options.mode, pane: options.pane, narrowCards: options.narrowCards, reserve: options.reserve, cards: options.cards, layers: options.layers, key: options.key ?? null, site: false })
     .catch((e) => console.error('[marginer] init failed', e))
   return m
 }

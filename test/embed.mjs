@@ -148,6 +148,29 @@ ok('mode: \'list\' boots into the sidebar', await page.$eval('.mg-sidebar', (e) 
 ok('the pane holds the reader\'s document alone', await page.$eval('.mg-pane', (e) => e.value.trim()) === '> argument in miniature\n\na visitor note')
 ok('the layer still paints with the sidebar open', await page.evaluate(() => CSS.highlights.get('marginer-layer')?.size) === 2)
 
+// offWhenClosed: closing puts the whole layer away, and a selection is just a selection.
+await page.evaluate(() => { Marginer.init({ storage, layers: window.demoLayers, offWhenClosed: true }) })
+await wait(300)
+ok('offWhenClosed boots painted like any other', await page.evaluate(() => CSS.highlights.get('marginer-layer')?.size) === 2)
+await click('.mg-bar [data-act="collapse"]')
+ok('closed: nothing is painted', !!(await page.$('.mg-fab')) && await page.evaluate(() => !CSS.highlights.get('marginer-layer') && !CSS.highlights.get('marginer')))
+ok('closed: selecting opens nothing', await select('portable') && (await wait(200), !(await page.$('.mg-compose'))))
+await click('.mg-fab')
+ok('reopening paints again', await page.evaluate(() => CSS.highlights.get('marginer-layer')?.size) === 2)
+ok('...and selecting offers a note again', await select('portable') && (await wait(200), !!(await page.$('.mg-compose'))))
+await page.keyboard.press('Escape')
+
+// A modal dialog makes the page inert: a selection made in it is left alone.
+await page.evaluate(() => {
+  const d = document.createElement('dialog'); d.id = 'lb'
+  d.innerHTML = '<p>lightbox caption text</p><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="40">'
+  document.body.appendChild(d); d.showModal()
+})
+ok('a selection inside a modal dialog opens nothing', await select('lightbox caption') && (await wait(200), !(await page.$('.mg-compose'))))
+await page.evaluate(() => { document.getElementById('lb').close(); document.getElementById('lb').remove() })
+ok('...and after it closes, selecting offers a note', await select('portable') && (await wait(200), !!(await page.$('.mg-compose'))))
+await page.keyboard.press('Escape')
+
 // A second init replaces the first; destroy() leaves nothing behind.
 await page.evaluate(() => { Marginer.init({ storage: { loadDoc: () => null, saveDoc: () => {} } }); })
 await wait(300)
