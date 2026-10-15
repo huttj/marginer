@@ -233,7 +233,7 @@ export class Marginer {
     this.renderElsewhere()
 
     this.on(document, 'mouseup', (e: MouseEvent) => this.onMouseUp(e))
-    this.on(document, 'touchend', (e: TouchEvent) => this.onMouseUp(e as any), { passive: true })
+    this.on(document, 'touchend', (e: TouchEvent) => this.onTouchEnd(e), { passive: true })
     this.on(document, 'mousedown', (e: MouseEvent) => this.onDocMouseDown(e), true)
     this.on(document, 'click', (e: MouseEvent) => this.onAltClickImage(e), true)
     this.on(document, 'click', (e: MouseEvent) => this.onClickHighlight(e))
@@ -1584,29 +1584,39 @@ export class Marginer {
     setTimeout(() => this.offerNote(), 10)
   }
 
+  // iOS raises the keyboard only for a focus made inside the touch handler itself,
+  // not from a timer after it. A finger's selection is already settled when it
+  // lifts, so take it now; only if there's none yet, look again a moment later.
+  private onTouchEnd(e: TouchEvent) {
+    if ((e.target as HTMLElement)?.closest?.('[data-mg-ui]')) return
+    if (!this.offerNote()) setTimeout(() => this.offerNote(), 10)
+  }
+
   // Finishing a selection opens the note panel straight away -- no button to aim
   // at in between. The cost is that ordinary selecting (copying a line, double-
   // clicking a word) opens it too, so the panel has to cost nothing to ignore:
   // click away with it empty and it leaves no highlight behind.
-  private offerNote() {
-    if (!this.active || modalUp()) return
+  // True once it has taken the selection.
+  private offerNote(): boolean {
+    if (!this.active || modalUp()) return false
     const sel = window.getSelection()
-    if (!sel || sel.isCollapsed || !sel.rangeCount) return
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return false
     const range = sel.getRangeAt(0)
-    if (this.sidebar.contains(range.commonAncestorContainer)) return
-    if (this.inEditable(range)) return
+    if (this.sidebar.contains(range.commonAncestorContainer)) return false
+    if (this.inEditable(range)) return false
     // A selection with no text is still worth taking if it holds an image --
     // that's how a figure gets annotated.
-    if (!sel.toString().trim() && !imagesInRange(range, document.body).length) return
+    if (!sel.toString().trim() && !imagesInRange(range, document.body).length) return false
     if (this.view !== 'mine') {
       const t = this.threads.find((x) => x.rootId === this.view)
       const pieces = quotePiecesFromRange(range, document.body)
       window.getSelection()?.removeAllRanges()
       if (t && pieces?.quotes.length) this.quoteIntoReply(pieces.quotes, pieces.nths)
-      return
+      return true
     }
     if (this.paneOpen()) this.appendQuote(range.cloneRange())
     else this.openCompose(range.cloneRange())
+    return true
   }
 
   // Selecting inside a form field or a rich-text editor is someone writing, not
